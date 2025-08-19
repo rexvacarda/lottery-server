@@ -123,45 +123,46 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a real email address' });
     }
 
-    // ✅ Shopify purchase check
-    const shopifyUrl = `https://${process.env.SHOPIFY_STORE}/admin/api/2025-01/orders.json?email=${encodeURIComponent(email)}&status=any&limit=1`;
+    // ✅ Shopify purchase check (guarded)
+    const shop = process.env.SHOPIFY_STORE;
+    const token = process.env.SHOPIFY_ADMIN_API_KEY;
+
+    // Debug logs help in Render logs
+    console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
+
+    if (!shop || !token) {
+      // If these aren’t set, fail cleanly (don’t hit “https://undefined/…”)
+      return res.status(503).json({
+        success: false,
+        message: 'Eligibility check unavailable. Please try again later.'
+      });
+    }
+
+    const shopifyUrl =
+      `https://${shop}/admin/api/2025-01/orders.json?email=${encodeURIComponent(email)}&status=any&limit=1`;
+
     const resp = await fetch(shopifyUrl, {
       headers: {
-        'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_API_KEY,
-        'Content-Type': 'application/json'
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       }
     });
 
     if (!resp.ok) {
-      console.error('Shopify API error', await resp.text());
-      return res.status(500).json({ success: false, message: 'Shopify check failed' });
+      console.error('Shopify API error', resp.status, await resp.text());
+      return res.status(503).json({ success: false, message: 'Eligibility check unavailable. Please try again later.' });
     }
 
     const data = await resp.json();
-    if (!data.orders || data.orders.length === 0) {
-      return res.status(403).json({ success: false, message: 'Only customers with a past order can enter this lottery.' });
-    }
+    const hasOrder = Array.isArray(data.orders) && data.orders.length > 0;
 
-    // Insert into DB (with unique index protection)
-    db.run(
-      `INSERT INTO entries (productId, email) VALUES (?, ?)`,
-      [productId, email],
-      function (err) {
-        if (err) {
-          if (String(err).toLowerCase().includes('unique')) {
-            return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
-          }
-          console.error('DB insert error', err);
-          return res.status(500).json({ success: false, message: 'Server error' });
-        }
-        res.json({ success: true, message: 'You have been entered into the lottery!' });
-      }
-    );
-  } catch (e) {
-    console.error('Enter handler error', e);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
+    if (!hasOrder) {
+      return res.status(200).json({
+        success: false,
+        message: 'Only customers with a past order can enter this lottery.'
+      });
+    }
 
 // ---------- DRAW a winner for a product + email them ----------
 app.post('/lottery/draw/:productId', (req, res) => {
