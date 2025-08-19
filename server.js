@@ -112,9 +112,10 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
+    // normalize
     email = String(email).trim().toLowerCase();
 
-    // format + DNS deliverability checks (keep from before)
+    // format + DNS deliverability checks (already defined helpers)
     if (!isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
@@ -124,14 +125,13 @@ app.post('/lottery/enter', async (req, res) => {
     }
 
     // ✅ Shopify purchase check (guarded)
-    const shop = process.env.SHOPIFY_STORE;
-    const token = process.env.SHOPIFY_ADMIN_API_KEY;
+    const shop = process.env.SHOPIFY_STORE;               // e.g. smelltoimpress.myshopify.com
+    const token = process.env.SHOPIFY_ADMIN_API_KEY;      // Admin API token with read_orders
 
-    // Debug logs help in Render logs
     console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
 
     if (!shop || !token) {
-      // If these aren’t set, fail cleanly (don’t hit “https://undefined/…”)
+      // Don’t call https://undefined/... ; fail cleanly
       return res.status(503).json({
         success: false,
         message: 'Eligibility check unavailable. Please try again later.'
@@ -142,6 +142,7 @@ app.post('/lottery/enter', async (req, res) => {
       `https://${shop}/admin/api/2025-01/orders.json?email=${encodeURIComponent(email)}&status=any&limit=1`;
 
     const resp = await fetch(shopifyUrl, {
+      method: 'GET',
       headers: {
         'X-Shopify-Access-Token': token,
         'Content-Type': 'application/json',
@@ -163,6 +164,27 @@ app.post('/lottery/enter', async (req, res) => {
         message: 'Only customers with a past order can enter this lottery.'
       });
     }
+
+    // Insert into DB (unique index prevents duplicate per product)
+    db.run(
+      `INSERT INTO entries (productId, email) VALUES (?, ?)`,
+      [productId, email],
+      function (err) {
+        if (err) {
+          if (String(err).toLowerCase().includes('unique')) {
+            return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
+          }
+          console.error('DB insert error', err);
+          return res.status(500).json({ success: false, message: 'Server error' });
+        }
+        res.json({ success: true, message: 'You have been entered into the lottery!' });
+      }
+    );
+  } catch (e) {
+    console.error('Enter handler error', e);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 // ---------- DRAW a winner for a product + email them ----------
 app.post('/lottery/draw/:productId', (req, res) => {
