@@ -5,6 +5,7 @@ const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const dns = require('dns').promises;
 require('dotenv').config();
+const fetch = require('node-fetch');
 
 const app = express();
 const port = process.env.PORT || 3005;
@@ -104,7 +105,7 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery (per product) with validation ----------
+// ---------- ENTER a lottery (per product) with validation + Shopify check ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
     let { email, productId } = req.body;
@@ -112,27 +113,43 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
-    // normalize
     email = String(email).trim().toLowerCase();
 
-    // format check
+    // format + DNS deliverability checks (keep from before)
     if (!isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
-
-    // DNS deliverability check (MX or A)
     const deliverable = await isDeliverableEmail(email);
     if (!deliverable) {
       return res.status(400).json({ success: false, message: 'Please enter a real email address' });
     }
 
+    // ✅ Shopify purchase check
+    const shopifyUrl = `https://${process.env.SHOPIFY_STORE}/admin/api/2025-01/orders.json?email=${encodeURIComponent(email)}&status=any&limit=1`;
+    const resp = await fetch(shopifyUrl, {
+      headers: {
+        'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_API_KEY,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!resp.ok) {
+      console.error('Shopify API error', await resp.text());
+      return res.status(500).json({ success: false, message: 'Shopify check failed' });
+    }
+
+    const data = await resp.json();
+    if (!data.orders || data.orders.length === 0) {
+      return res.status(403).json({ success: false, message: 'Only customers with a past order can enter this lottery.' });
+    }
+
+    // Insert into DB (with unique index protection)
     db.run(
       `INSERT INTO entries (productId, email) VALUES (?, ?)`,
       [productId, email],
       function (err) {
         if (err) {
-          const msg = String(err).toLowerCase();
-          if (msg.includes('unique')) {
+          if (String(err).toLowerCase().includes('unique')) {
             return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
           }
           console.error('DB insert error', err);
