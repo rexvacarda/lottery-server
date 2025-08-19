@@ -1,9 +1,9 @@
-// server.js (Lottery – per product) — email, admin page, Shopify eligibility
-
+// server.js (Lottery – per product) — email, admin page, Shopify eligibility, MX validation, dedupe
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
+const dns = require('dns').promises;
 require('dotenv').config();
 
 const app = express();
@@ -17,10 +17,7 @@ const mailer = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT || 587),
   secure: String(process.env.EMAIL_PORT) === '465', // true if SSL (465)
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
 // ---------- SQLite DB (file) ----------
@@ -47,14 +44,47 @@ db.serialize(() => {
     )
   `);
 
-  // Prevent duplicate entries per product (productId + email must be unique)
+  // Prevent duplicate entries for the same product by the same email
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
 
 // ---------- Helpers ----------
-function isValidEmail(email) {
-  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(String(email).toLowerCase());
+const BLOCKED_EMAIL_DOMAINS = (process.env.BLOCKED_EMAIL_DOMAINS || '')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+// basic email format
+function isValidEmailFormat(email) {
+  // Simple robust pattern: text@text.tld (tld >= 2)
+  const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
+  return re.test(email);
+}
+
+// DNS helper with timeout
+async function withTimeout(promise, ms = 2000) {
+  return await Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('DNS timeout')), ms))
+  ]);
+}
+
+// MX (or A) check for deliverability
+async function isDeliverableEmail(email) {
+  const domain = String(email).split('@')[1]?.toLowerCase();
+  if (!domain) return false;
+
+  if (BLOCKED_EMAIL_DOMAINS.includes(domain)) return false;
+
+  try {
+    const mx = await withTimeout(dns.resolveMx(domain));
+    if (Array.isArray(mx) && mx.length > 0) return true;
+  } catch (_) { /* fallthrough to A */ }
+
+  try {
+    const a = await withTimeout(dns.resolve(domain));
+    if (Array.isArray(a) && a.length > 0) return true;
+  } catch (_) { /* ignore */ }
+
+  return false;
 }
 
 // ---------- CREATE a product lottery ----------
@@ -74,60 +104,28 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery (per product) with Shopify purchase check ----------
+// ---------- ENTER a lottery (per product) with validation ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
     let { email, productId } = req.body;
-
     if (!email || !productId) {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
-    // normalize + validate email
+    // normalize
     email = String(email).trim().toLowerCase();
-    if (!isValidEmail(email)) {
+
+    // format check
+    if (!isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
 
-    // Optional Shopify eligibility check (only past customers can enter)
-    const SHOP = process.env.SHOPIFY_SHOP;
-    const TOKEN = process.env.SHOPIFY_TOKEN;
-
-    if (SHOP && TOKEN) {
-      // Check if there is at least one order with this email (customer or guest)
-      // API: GET /admin/api/2024-07/orders.json?status=any&email=<email>&limit=1
-      const url = `https://${SHOP}/admin/api/2024-07/orders.json?status=any&email=${encodeURIComponent(email)}&limit=1`;
-
-      // Node 18+ has global fetch; if your runtime doesn't, add node-fetch dependency
-      const resp = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'X-Shopify-Access-Token': TOKEN,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!resp.ok) {
-        console.error('Shopify orders lookup failed', resp.status, await resp.text());
-        return res.status(503).json({ success: false, message: 'Eligibility check unavailable. Please try again later.' });
-      }
-
-      const data = await resp.json();
-      const hasOrder = Array.isArray(data.orders) && data.orders.length > 0;
-
-      if (!hasOrder) {
-        return res.status(200).json({
-          success: false,
-          message: 'This lottery is only open to previous customers.'
-        });
-      }
-    } else {
-      // If SHOPIFY_* env vars not set, we allow entries (no restriction)
-      // console.warn('SHOPIFY_SHOP / SHOPIFY_TOKEN not set; skipping eligibility check.');
+    // DNS deliverability check (MX or A)
+    const deliverable = await isDeliverableEmail(email);
+    if (!deliverable) {
+      return res.status(400).json({ success: false, message: 'Please enter a real email address' });
     }
 
-    // Insert entry (enforced unique per product)
     db.run(
       `INSERT INTO entries (productId, email) VALUES (?, ?)`,
       [productId, email],
@@ -209,13 +207,11 @@ app.get('/admin/entries', (req, res) => {
     return res.status(403).send('Forbidden: Wrong password');
   }
 
-  db.all(`SELECT productId, email FROM entries ORDER BY productId`, [], (err, rows) => {
+  db.all(`SELECT productId, email FROM entries ORDER BY productId, email`, [], (err, rows) => {
     if (err) return res.status(500).send('DB error');
 
     const counts = {};
-    rows.forEach(r => {
-      counts[r.productId] = (counts[r.productId] || 0) + 1;
-    });
+    rows.forEach(r => { counts[r.productId] = (counts[r.productId] || 0) + 1; });
 
     let html = `<h2>Lottery Entries</h2>`;
     html += `<p>Total entries: ${rows.length}</p>`;
@@ -225,16 +221,38 @@ app.get('/admin/entries', (req, res) => {
     }
     html += `</ul>`;
     html += `<table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Product ID</th><th>Email</th></tr>`;
-    rows.forEach(r => {
-      html += `<tr><td>${r.productId}</td><td>${r.email}</td></tr>`;
-    });
+    rows.forEach(r => { html += `<tr><td>${r.productId}</td><td>${r.email}</td></tr>`; });
     html += `</table>`;
     res.send(html);
   });
 });
 
+// --- ADMIN: one-time repair — normalize emails + enforce unique ---
+app.post('/admin/repair-entries', (req, res) => {
+  const pass = req.query.pass;
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ ok: false, message: 'Forbidden' });
+  }
+  db.serialize(() => {
+    db.run(`UPDATE entries SET email = lower(trim(email))`);
+    // delete duplicates: keep the earliest row per (productId,email)
+    db.run(`
+      DELETE FROM entries
+      WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM entries GROUP BY productId, email
+      )
+    `);
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
+  });
+  res.json({ ok: true, repaired: true });
+});
+
 // ---------- Health check ----------
 app.get('/', (_req, res) => {
+  res.json({ ok: true, service: 'lottery', version: 1 });
+});
+
+app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'lottery', version: 1 });
 });
 
