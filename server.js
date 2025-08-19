@@ -5,7 +5,6 @@ const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const dns = require('dns').promises;
 require('dotenv').config();
-const fetch = require('node-fetch');
 
 const app = express();
 const port = process.env.PORT || 3005;
