@@ -1,5 +1,4 @@
-// server.js (Lottery – per product) — with email on draw + validation
-// CommonJS version for Windows / default Node setups
+// server.js (Lottery – per product) — with email + simple admin page
 
 const express = require('express');
 const cors = require('cors');
@@ -17,7 +16,7 @@ app.use(cors());
 const mailer = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT || 587),
-  secure: String(process.env.EMAIL_PORT) === '465',
+  secure: String(process.env.EMAIL_PORT) === '465', // true if SSL (465)
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
@@ -25,7 +24,7 @@ const mailer = nodemailer.createTransport({
 });
 
 // ---------- SQLite DB (file) ----------
-const db = new sqlite3.Database(process.env.DB_PATH || 'lottery.db');
+const db = new sqlite3.Database('lottery.db'); // persists to disk
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS products (
@@ -44,24 +43,14 @@ db.serialize(() => {
       email TEXT
     )
   `);
-
-  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
-
-// ---------- Email validation helper ----------
-function isValidEmail(email) {
-  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(String(email).toLowerCase());
-}
 
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
   const { productId, name, startPrice, increment, endAt } = req.body;
-
   if (!productId || !name || !startPrice || !increment || !endAt) {
     return res.status(400).json({ success: false, message: 'Missing fields' });
   }
-
   db.run(
     `INSERT INTO products (productId, name, startPrice, increment, endAt)
      VALUES (?, ?, ?, ?, ?)`,
@@ -73,41 +62,25 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery ----------
+// ---------- ENTER a lottery (per product) ----------
 app.post('/lottery/enter', (req, res) => {
-  let { email, productId } = req.body;
-
+  const { email, productId } = req.body;
   if (!email || !productId) {
     return res.status(400).json({ success: false, message: 'Missing email or productId' });
   }
-
-  // normalize email
-  email = String(email).trim().toLowerCase();
-
-  // ✅ reject invalid emails
-  if (!isValidEmail(email)) {
-    return res.status(400).json({ success: false, message: 'Invalid email format' });
-  }
-
   db.run(
     `INSERT INTO entries (productId, email) VALUES (?, ?)`,
     [productId, email],
     function (err) {
-      if (err) {
-        if (String(err).toLowerCase().includes('unique')) {
-          return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
-        }
-        return res.status(500).json({ success: false, message: 'Server error' });
-      }
+      if (err) return res.status(500).json({ success: false, message: 'Server error' });
       res.json({ success: true, message: 'You have been entered into the lottery!' });
     }
   );
 });
 
-// ---------- DRAW a winner ----------
+// ---------- DRAW a winner for a product + email them ----------
 app.post('/lottery/draw/:productId', (req, res) => {
   const productId = req.params.productId;
-
   db.all(`SELECT * FROM entries WHERE productId = ?`, [productId], (err, rows) => {
     if (err) return res.status(500).json({ success: false, message: 'Server error' });
     if (!rows || rows.length === 0) {
@@ -127,17 +100,13 @@ app.post('/lottery/draw/:productId', (req, res) => {
         <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
           <h2>🎉 Congratulations!</h2>
           <p>You’ve won the lottery for <strong>${title}</strong>.</p>
-          ${
-            claimLink
-              ? `
-                <p>Click below to claim your prize:</p>
-                <p><a href="${claimLink}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
-                  Claim your prize
-                </a></p>
-                <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>
-              `
-              : `<p>Please reply to this email to claim your prize.</p>`
-          }
+          ${claimLink
+            ? `<p>Click below to claim your prize:</p>
+               <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
+                 Claim your prize
+               </a></p>
+               <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>`
+            : `<p>Please reply to this email to claim your prize.</p>`}
         </div>
       `;
 
@@ -162,32 +131,41 @@ app.post('/lottery/draw/:productId', (req, res) => {
   });
 });
 
-// ---------- SMTP test ----------
-app.all('/debug/email', async (req, res) => {
-  try {
-    await mailer.verify();
-    await mailer.sendMail({
-      from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
-      subject: 'SMTP test from Lottery server',
-      text: 'If you received this, your SMTP settings work.'
-    });
-    res.json({ ok: true, sent: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
+// --- ADMIN: List all entries ---
+app.get('/admin/entries', (req, res) => {
+  const pass = req.query.pass;
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).send('Forbidden: Wrong password');
   }
-});
 
-const path = require('path');
-console.log('Loaded server file:', __filename);
-console.log('Using .env at     :', path.resolve('.env'));
+  db.all(`SELECT productId, email FROM entries ORDER BY productId`, [], (err, rows) => {
+    if (err) return res.status(500).send('DB error');
+
+    // Count per product
+    const counts = {};
+    rows.forEach(r => {
+      counts[r.productId] = (counts[r.productId] || 0) + 1;
+    });
+
+    // Build simple HTML
+    let html = `<h2>Lottery Entries</h2>`;
+    html += `<p>Total entries: ${rows.length}</p>`;
+    html += `<ul>`;
+    for (const pid in counts) {
+      html += `<li>Product ${pid}: ${counts[pid]} entries</li>`;
+    }
+    html += `</ul>`;
+    html += `<table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Product ID</th><th>Email</th></tr>`;
+    rows.forEach(r => {
+      html += `<tr><td>${r.productId}</td><td>${r.email}</td></tr>`;
+    });
+    html += `</table>`;
+    res.send(html);
+  });
+});
 
 // ---------- Health check ----------
 app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'lottery', version: 1 });
-});
-
-app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'lottery', version: 1 });
 });
 
