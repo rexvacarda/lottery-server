@@ -24,7 +24,8 @@ const mailer = nodemailer.createTransport({
 });
 
 // ---------- SQLite DB (file) ----------
-const db = new sqlite3.Database('lottery.db'); // persists to disk
+const db = new sqlite3.Database(process.env.DB_PATH || 'lottery.db'); 
+console.log('DB path in use:', process.env.DB_PATH || 'lottery.db');
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS products (
