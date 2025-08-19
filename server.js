@@ -1,4 +1,4 @@
-// server.js (Lottery – per product) — with email + simple admin page
+// server.js (Lottery – per product) — email, admin page, Shopify eligibility
 
 const express = require('express');
 const cors = require('cors');
@@ -24,8 +24,9 @@ const mailer = nodemailer.createTransport({
 });
 
 // ---------- SQLite DB (file) ----------
-const db = new sqlite3.Database(process.env.DB_PATH || 'lottery.db'); 
+const db = new sqlite3.Database(process.env.DB_PATH || 'lottery.db');
 console.log('DB path in use:', process.env.DB_PATH || 'lottery.db');
+
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS products (
@@ -37,6 +38,7 @@ db.serialize(() => {
       endAt TEXT
     )
   `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +46,16 @@ db.serialize(() => {
       email TEXT
     )
   `);
+
+  // Prevent duplicate entries per product (productId + email must be unique)
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
+
+// ---------- Helpers ----------
+function isValidEmail(email) {
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(String(email).toLowerCase());
+}
 
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
@@ -63,20 +74,79 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery (per product) ----------
-app.post('/lottery/enter', (req, res) => {
-  const { email, productId } = req.body;
-  if (!email || !productId) {
-    return res.status(400).json({ success: false, message: 'Missing email or productId' });
-  }
-  db.run(
-    `INSERT INTO entries (productId, email) VALUES (?, ?)`,
-    [productId, email],
-    function (err) {
-      if (err) return res.status(500).json({ success: false, message: 'Server error' });
-      res.json({ success: true, message: 'You have been entered into the lottery!' });
+// ---------- ENTER a lottery (per product) with Shopify purchase check ----------
+app.post('/lottery/enter', async (req, res) => {
+  try {
+    let { email, productId } = req.body;
+
+    if (!email || !productId) {
+      return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
-  );
+
+    // normalize + validate email
+    email = String(email).trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Invalid email format' });
+    }
+
+    // Optional Shopify eligibility check (only past customers can enter)
+    const SHOP = process.env.SHOPIFY_SHOP;
+    const TOKEN = process.env.SHOPIFY_TOKEN;
+
+    if (SHOP && TOKEN) {
+      // Check if there is at least one order with this email (customer or guest)
+      // API: GET /admin/api/2024-07/orders.json?status=any&email=<email>&limit=1
+      const url = `https://${SHOP}/admin/api/2024-07/orders.json?status=any&email=${encodeURIComponent(email)}&limit=1`;
+
+      // Node 18+ has global fetch; if your runtime doesn't, add node-fetch dependency
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-Shopify-Access-Token': TOKEN,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!resp.ok) {
+        console.error('Shopify orders lookup failed', resp.status, await resp.text());
+        return res.status(503).json({ success: false, message: 'Eligibility check unavailable. Please try again later.' });
+      }
+
+      const data = await resp.json();
+      const hasOrder = Array.isArray(data.orders) && data.orders.length > 0;
+
+      if (!hasOrder) {
+        return res.status(200).json({
+          success: false,
+          message: 'This lottery is only open to previous customers.'
+        });
+      }
+    } else {
+      // If SHOPIFY_* env vars not set, we allow entries (no restriction)
+      // console.warn('SHOPIFY_SHOP / SHOPIFY_TOKEN not set; skipping eligibility check.');
+    }
+
+    // Insert entry (enforced unique per product)
+    db.run(
+      `INSERT INTO entries (productId, email) VALUES (?, ?)`,
+      [productId, email],
+      function (err) {
+        if (err) {
+          const msg = String(err).toLowerCase();
+          if (msg.includes('unique')) {
+            return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
+          }
+          console.error('DB insert error', err);
+          return res.status(500).json({ success: false, message: 'Server error' });
+        }
+        res.json({ success: true, message: 'You have been entered into the lottery!' });
+      }
+    );
+  } catch (e) {
+    console.error('Enter handler error', e);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
 
 // ---------- DRAW a winner for a product + email them ----------
@@ -142,13 +212,11 @@ app.get('/admin/entries', (req, res) => {
   db.all(`SELECT productId, email FROM entries ORDER BY productId`, [], (err, rows) => {
     if (err) return res.status(500).send('DB error');
 
-    // Count per product
     const counts = {};
     rows.forEach(r => {
       counts[r.productId] = (counts[r.productId] || 0) + 1;
     });
 
-    // Build simple HTML
     let html = `<h2>Lottery Entries</h2>`;
     html += `<p>Total entries: ${rows.length}</p>`;
     html += `<ul>`;
