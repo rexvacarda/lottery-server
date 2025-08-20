@@ -1,12 +1,14 @@
-// server.js (Lottery – per product) — email, admin page, Shopify eligibility, MX validation, dedupe
-const express = require('express');
-const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
+// server.js (Lottery – per product)
+// Email, admin page, Shopify eligibility, MX validation, dedupe, public "current" endpoints
+
+const express  = require('express');
+const cors     = require('cors');
+const sqlite3  = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const dns = require('dns').promises;
 require('dotenv').config();
 
-const app = express();
+const app  = express();
 const port = process.env.PORT || 3005;
 
 app.use(express.json());
@@ -21,8 +23,9 @@ const mailer = nodemailer.createTransport({
 });
 
 // ---------- SQLite DB (file) ----------
-const db = new sqlite3.Database(process.env.DB_PATH || 'lottery.db');
-console.log('DB path in use:', process.env.DB_PATH || 'lottery.db');
+const dbPath = process.env.DB_PATH || 'lottery.db';
+const db = new sqlite3.Database(dbPath);
+console.log('DB path in use:', dbPath);
 
 db.serialize(() => {
   db.run(`
@@ -44,15 +47,17 @@ db.serialize(() => {
     )
   `);
 
-  // Prevent duplicate entries for the same product by the same email
+  // Prevent duplicate entries (same product, same email)
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
 
 // ---------- Helpers ----------
 const BLOCKED_EMAIL_DOMAINS = (process.env.BLOCKED_EMAIL_DOMAINS || '')
-  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  .split(',')
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
 
-// basic email format
+// Basic email format
 function isValidEmailFormat(email) {
   const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
   return re.test(email);
@@ -111,7 +116,7 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery ----------
+// ---------- ENTER a lottery (with validation + Shopify order check) ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
     let { email, productId } = req.body;
@@ -119,8 +124,10 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
+    // normalize
     email = String(email).trim().toLowerCase();
 
+    // format + DNS deliverability
     if (!isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
@@ -129,8 +136,10 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a real email address' });
     }
 
-    const shop = process.env.SHOPIFY_STORE;
-    const token = process.env.SHOPIFY_ADMIN_API_KEY;
+    // Shopify purchase check (guarded)
+    const shop  = process.env.SHOPIFY_STORE;          // e.g. smelltoimpress.myshopify.com
+    const token = process.env.SHOPIFY_ADMIN_API_KEY;  // Admin API token with read_orders
+    console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
 
     if (!shop || !token) {
       return res.status(503).json({
@@ -166,6 +175,7 @@ app.post('/lottery/enter', async (req, res) => {
       });
     }
 
+    // Insert (unique index prevents duplicate per product)
     db.run(
       `INSERT INTO entries (productId, email) VALUES (?, ?)`,
       [productId, email],
@@ -186,7 +196,7 @@ app.post('/lottery/enter', async (req, res) => {
   }
 });
 
-// ---------- DRAW a winner ----------
+// ---------- DRAW a winner (and email them) ----------
 app.post('/lottery/draw/:productId', (req, res) => {
   const productId = req.params.productId;
   db.all(`SELECT * FROM entries WHERE productId = ?`, [productId], (err, rows) => {
@@ -208,13 +218,17 @@ app.post('/lottery/draw/:productId', (req, res) => {
         <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
           <h2>🎉 Congratulations!</h2>
           <p>You’ve won the lottery for <strong>${title}</strong>.</p>
-          ${claimLink
-            ? `<p>Click below to claim your prize:</p>
-               <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
-                 Claim your prize
-               </a></p>
-               <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>`
-            : `<p>Please reply to this email to claim your prize.</p>`}
+          ${
+            claimLink
+              ? `
+                <p>Click below to claim your prize:</p>
+                <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
+                  Claim your prize
+                </a></p>
+                <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>
+              `
+              : `<p>Please reply to this email to claim your prize.</p>`
+          }
         </div>
       `;
 
@@ -266,7 +280,7 @@ app.get('/admin/entries', (req, res) => {
   });
 });
 
-// --- ADMIN: repair entries ---
+// --- ADMIN: repair entries (normalize + dedupe) ---
 app.post('/admin/repair-entries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -285,7 +299,7 @@ app.post('/admin/repair-entries', (req, res) => {
   res.json({ ok: true, repaired: true });
 });
 
-// --- ADMIN: list lotteries with entries ---
+// --- ADMIN: list lotteries with entries (for your admin table) ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -313,7 +327,42 @@ app.get('/admin/lotteries', (req, res) => {
   });
 });
 
-// --- PUBLIC: get entry count ---
+// --- PUBLIC: list current active lotteries (no admin password) ---
+app.get('/lottery/current', (req, res) => {
+  const sql = `
+    SELECT productId, name, endAt
+    FROM products
+    WHERE endAt IS NULL OR datetime(endAt) > datetime('now')
+    ORDER BY 
+      CASE WHEN endAt IS NULL OR endAt = '' THEN 1 ELSE 0 END,
+      endAt
+    LIMIT 10
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, message: 'DB error' });
+    res.json({ ok: true, lotteries: rows });
+  });
+});
+
+// --- PUBLIC: fetch only one active lottery (first upcoming one) ---
+app.get('/lottery/current/one', (req, res) => {
+  const sql = `
+    SELECT productId, name, endAt
+    FROM products
+    WHERE endAt IS NULL OR datetime(endAt) > datetime('now')
+    ORDER BY 
+      CASE WHEN endAt IS NULL OR endAt = '' THEN 1 ELSE 0 END,
+      endAt
+    LIMIT 1
+  `;
+  db.get(sql, [], (err, row) => {
+    if (err) return res.status(500).json({ ok: false, message: 'DB error' });
+    if (!row) return res.json({ ok: true, lottery: null });
+    res.json({ ok: true, lottery: row });
+  });
+});
+
+// --- PUBLIC: get entry count for a product ---
 app.get('/lottery/count/:productId', (req, res) => {
   const productId = req.params.productId;
   db.get(
@@ -329,7 +378,7 @@ app.get('/lottery/count/:productId', (req, res) => {
   );
 });
 
-// ---------- Health check ----------
+// ---------- Health checks ----------
 app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'lottery', version: 1 });
 });
