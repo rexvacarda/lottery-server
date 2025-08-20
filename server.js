@@ -285,6 +285,26 @@ app.post('/admin/repair-entries', (req, res) => {
   });
   res.json({ ok: true, repaired: true });
 });
+// --- ADMIN: list all lotteries with counts ---
+app.get('/admin/lotteries', (req, res) => {
+  const pass = req.query.pass;
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ ok: false, message: 'Forbidden' });
+  }
+
+  const sql = `
+    SELECT p.productId, p.name, p.endAt,
+           COUNT(e.id) as entries
+    FROM products p
+    LEFT JOIN entries e ON e.productId = p.productId
+    GROUP BY p.productId
+    ORDER BY p.endAt
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, message: 'DB error' });
+    res.json({ ok: true, lotteries: rows });
+});
 
 // ---------- Health check ----------
 app.get('/', (_req, res) => {
