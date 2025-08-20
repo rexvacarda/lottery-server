@@ -285,7 +285,8 @@ app.post('/admin/repair-entries', (req, res) => {
   });
   res.json({ ok: true, repaired: true });
 });
-// --- ADMIN: list all lotteries with counts ---
+
+// --- ADMIN: list all lotteries with counts (only those with entries) ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -296,14 +297,37 @@ app.get('/admin/lotteries', (req, res) => {
     SELECT p.productId, p.name, p.endAt,
            COUNT(e.id) as entries
     FROM products p
-    LEFT JOIN entries e ON e.productId = p.productId
+    JOIN entries e ON e.productId = p.productId
     GROUP BY p.productId
-    ORDER BY p.endAt
+    HAVING entries > 0
+    ORDER BY
+      CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END,
+      p.endAt
   `;
 
   db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, message: 'DB error' });
+    if (err) {
+      console.error('SQL error /admin/lotteries:', err);
+      return res.status(500).json({ ok: false, message: 'DB error' });
+    }
     res.json({ ok: true, lotteries: rows });
+  });
+});
+
+// --- PUBLIC: get entry count for a product (optional helper) ---
+app.get('/lottery/count/:productId', (req, res) => {
+  const productId = req.params.productId;
+  db.get(
+    `SELECT COUNT(*) AS c FROM entries WHERE productId = ?`,
+    [productId],
+    (err, row) => {
+      if (err) {
+        console.error('SQL error /lottery/count:', err);
+        return res.status(500).json({ success: false });
+      }
+      res.json({ success: true, totalEntries: row?.c || 0 });
+    }
+  );
 });
 
 // ---------- Health check ----------
