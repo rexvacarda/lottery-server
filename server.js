@@ -54,7 +54,6 @@ const BLOCKED_EMAIL_DOMAINS = (process.env.BLOCKED_EMAIL_DOMAINS || '')
 
 // basic email format
 function isValidEmailFormat(email) {
-  // Simple robust pattern: text@text.tld (tld >= 2)
   const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
   return re.test(email);
 }
@@ -77,34 +76,42 @@ async function isDeliverableEmail(email) {
   try {
     const mx = await withTimeout(dns.resolveMx(domain));
     if (Array.isArray(mx) && mx.length > 0) return true;
-  } catch (_) { /* fallthrough to A */ }
+  } catch (_) { /* fallthrough */ }
 
   try {
     const a = await withTimeout(dns.resolve(domain));
     if (Array.isArray(a) && a.length > 0) return true;
-  } catch (_) { /* ignore */ }
+  } catch (_) { }
 
   return false;
 }
 
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
-  const { productId, name, startPrice, increment, endAt } = req.body;
-  if (!productId || !name || !startPrice || !increment || !endAt) {
+  let { productId, name, startPrice, increment, endAt } = req.body;
+
+  if (productId == null || name == null || endAt == null || String(name).trim() === '') {
     return res.status(400).json({ success: false, message: 'Missing fields' });
   }
+
+  if (startPrice == null || startPrice === '') startPrice = 0;
+  if (increment == null || increment === '') increment = 0;
+
   db.run(
     `INSERT INTO products (productId, name, startPrice, increment, endAt)
      VALUES (?, ?, ?, ?, ?)`,
-    [productId, name, startPrice, increment, endAt],
+    [productId, name, Number(startPrice), Number(increment), endAt],
     function (err) {
-      if (err) return res.status(500).json({ success: false, message: 'Server error' });
+      if (err) {
+        console.error('Create lottery insert error:', err);
+        return res.status(500).json({ success: false, message: 'Server error' });
+      }
       res.json({ success: true, productId });
     }
   );
 });
 
-// ---------- ENTER a lottery (per product) with validation + Shopify check ----------
+// ---------- ENTER a lottery ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
     let { email, productId } = req.body;
@@ -112,10 +119,8 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
-    // normalize
     email = String(email).trim().toLowerCase();
 
-    // format + DNS deliverability checks (already defined helpers)
     if (!isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
@@ -124,14 +129,10 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a real email address' });
     }
 
-    // ✅ Shopify purchase check (guarded)
-    const shop = process.env.SHOPIFY_STORE;               // e.g. smelltoimpress.myshopify.com
-    const token = process.env.SHOPIFY_ADMIN_API_KEY;      // Admin API token with read_orders
-
-    console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
+    const shop = process.env.SHOPIFY_STORE;
+    const token = process.env.SHOPIFY_ADMIN_API_KEY;
 
     if (!shop || !token) {
-      // Don’t call https://undefined/... ; fail cleanly
       return res.status(503).json({
         success: false,
         message: 'Eligibility check unavailable. Please try again later.'
@@ -165,7 +166,6 @@ app.post('/lottery/enter', async (req, res) => {
       });
     }
 
-    // Insert into DB (unique index prevents duplicate per product)
     db.run(
       `INSERT INTO entries (productId, email) VALUES (?, ?)`,
       [productId, email],
@@ -186,7 +186,7 @@ app.post('/lottery/enter', async (req, res) => {
   }
 });
 
-// ---------- DRAW a winner for a product + email them ----------
+// ---------- DRAW a winner ----------
 app.post('/lottery/draw/:productId', (req, res) => {
   const productId = req.params.productId;
   db.all(`SELECT * FROM entries WHERE productId = ?`, [productId], (err, rows) => {
@@ -266,7 +266,7 @@ app.get('/admin/entries', (req, res) => {
   });
 });
 
-// --- ADMIN: one-time repair — normalize emails + enforce unique ---
+// --- ADMIN: repair entries ---
 app.post('/admin/repair-entries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -274,7 +274,6 @@ app.post('/admin/repair-entries', (req, res) => {
   }
   db.serialize(() => {
     db.run(`UPDATE entries SET email = lower(trim(email))`);
-    // delete duplicates: keep the earliest row per (productId,email)
     db.run(`
       DELETE FROM entries
       WHERE rowid NOT IN (
@@ -286,7 +285,7 @@ app.post('/admin/repair-entries', (req, res) => {
   res.json({ ok: true, repaired: true });
 });
 
-// --- ADMIN: list all lotteries with counts (only those with entries) ---
+// --- ADMIN: list lotteries with entries ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -314,7 +313,7 @@ app.get('/admin/lotteries', (req, res) => {
   });
 });
 
-// --- PUBLIC: get entry count for a product (optional helper) ---
+// --- PUBLIC: get entry count ---
 app.get('/lottery/count/:productId', (req, res) => {
   const productId = req.params.productId;
   db.get(
@@ -334,7 +333,6 @@ app.get('/lottery/count/:productId', (req, res) => {
 app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'lottery', version: 1 });
 });
-
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'lottery', version: 1 });
 });
