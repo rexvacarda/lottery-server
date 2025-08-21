@@ -1,4 +1,4 @@
-// server.js (Lottery – per product)
+// server.js (Lottery – per product + Back-in-Stock multilingual)
 // Email, admin page, Shopify eligibility, MX validation, dedupe, public "current" endpoints
 
 const express  = require('express');
@@ -43,7 +43,8 @@ db.serialize(() => {
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       productId INTEGER,
-      email TEXT
+      email TEXT,
+      locale TEXT
     )
   `);
 
@@ -63,6 +64,18 @@ db.serialize(() => {
       drawnAt TEXT
     )
   `);
+
+  // Back-in-stock requests (multilingual)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS bis_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      productId TEXT,
+      email TEXT,
+      locale TEXT,
+      createdAt TEXT
+    )
+  `);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bis_unique ON bis_requests (productId, email)`);
 
   // Prevent duplicate entries (same product, same email)
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
@@ -122,7 +135,7 @@ function saveWinner(productId, email) {
   });
 }
 
-// Normalize locale key (e.g., "de-CH" -> "de")
+// Normalize locale key
 function normLocale(loc) {
   if (!loc) return 'en';
   return String(loc).toLowerCase();
@@ -132,7 +145,7 @@ function shortLocale(loc) {
   return n.split('-')[0];
 }
 
-// Build i18n email (subject + html) based on locale
+// Build i18n email (subject + html) for lottery winners
 function buildEmail(locale, title, claimLink) {
   const l = normLocale(locale);
   const s = shortLocale(l);
@@ -415,6 +428,77 @@ function buildEmail(locale, title, claimLink) {
   return { subject: pack.subject, html };
 }
 
+// ---------- Back-in-Stock (BIS) translations & helpers ----------
+const BIS_I18N = {
+  subject: {
+    en: 'Back in stock: {{title}}',
+    de: 'Wieder auf Lager: {{title}}',
+    fr: 'De retour en stock : {{title}}',
+    es: '¡De vuelta en stock!: {{title}}',
+    it: 'Tornato disponibile: {{title}}',
+    nl: 'Terug op voorraad: {{title}}',
+    da: 'Tilbage på lager: {{title}}',
+    sv: 'Tillbaka i lager: {{title}}',
+    nb: 'Tilbake på lager: {{title}}',
+    fi: 'Täydennetty varastoon: {{title}}',
+    cs: 'Zpět na skladě: {{title}}',
+    sk: 'Opäť na sklade: {{title}}',
+    sl: 'Spet na zalogi: {{title}}',
+    hu: 'Újra készleten: {{title}}',
+    ro: 'Înapoi în stoc: {{title}}',
+    pl: 'Ponownie w magazynie: {{title}}',
+    pt: 'De volta ao estoque: {{title}}',
+    bg: 'Отново в наличност: {{title}}',
+    el: 'Ξανά διαθέσιμο: {{title}}',
+    ru: 'Снова в наличии: {{title}}',
+    tr: 'Yeniden stokta: {{title}}',
+    vi: 'Có hàng trở lại: {{title}}',
+    ja: '再入荷：{{title}}',
+    ko: '재입고: {{title}}',
+    'zh-cn': '现已到货：{{title}}',
+    'zh-tw': '現已到貨：{{title}}'
+  },
+  body: {
+    en: (title, url) => `
+      <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+        <p>Good news — <strong>${title}</strong> is back in stock.</p>
+        <p><a href="${url}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Shop now</a></p>
+      </div>`,
+    de: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gute Nachrichten — <strong>${t}</strong> ist wieder vorrätig.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Jetzt kaufen</a></p></div>`,
+    fr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Bonne nouvelle — <strong>${t}</strong> est de retour en stock.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Je commande</a></p></div>`,
+    es: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buenas noticias: <strong>${t}</strong> está de vuelta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar ahora</a></p></div>`,
+    it: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buone notizie — <strong>${t}</strong> è di nuovo disponibile.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Acquista ora</a></p></div>`,
+    nl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goed nieuws — <strong>${t}</strong> is weer op voorraad.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Nu shoppen</a></p></div>`,
+    da: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gode nyheder — <strong>${t}</strong> er tilbage på lager.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Køb nu</a></p></div>`,
+    sv: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goda nyheter — <strong>${t}</strong> är tillbaka i lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Handla nu</a></p></div>`,
+    nb: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Godt nytt — <strong>${t}</strong> er tilbake på lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kjøp nå</a></p></div>`,
+    fi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Hyviä uutisia — <strong>${t}</strong> on taas varastossa.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Osta nyt</a></p></div>`,
+    cs: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvělé zprávy — <strong>${t}</strong> je opět skladem.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Koupit nyní</a></p></div>`,
+    sk: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvelá správa — <strong>${t}</strong> je opäť na sklade.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kúpiť teraz</a></p></div>`,
+    sl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobre novice — <strong>${t}</strong> je spet na zalogi.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Nakupuj zdaj</a></p></div>`,
+    hu: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Jó hír — <strong>${t}</strong> újra készleten van.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Vásárlás</a></p></div>`,
+    ro: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Veste bună — <strong>${t}</strong> este din nou în stoc.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Cumpără acum</a></p></div>`,
+    pl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobra wiadomość — <strong>${t}</strong> znów jest dostępny.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kup teraz</a></p></div>`,
+    pt: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Boa notícia — <strong>${t}</strong> está de volta ao estoque.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar agora</a></p></div>`,
+    bg: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Добра новина — <strong>${t}</strong> отново е наличен.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купи сега</a></p></div>`,
+    el: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Καλά νέα — το <strong>${t}</strong> είναι ξανά διαθέσιμο.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Αγορά τώρα</a></p></div>`,
+    ru: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Отличная новость — <strong>${t}</strong> снова в наличии.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купить</a></p></div>`,
+    tr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Harika haber — <strong>${t}</strong> yeniden stokta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Hemen al</a></p></div>`,
+    vi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Tin vui — <strong>${t}</strong> đã có hàng trở lại.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Mua ngay</a></p></div>`,
+    ja: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>朗報です。<strong>${t}</strong> が再入荷しました。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">今すぐ購入</a></p></div>`,
+    ko: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>좋은 소식 — <strong>${t}</strong> 가 재입고되었습니다.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">지금 구매</a></p></div>`,
+    'zh-cn': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 现已到货。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即购买</a></p></div>`,
+    'zh-tw': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 現已到貨。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即購買</a></p></div>`
+  }
+};
+function pickLoc(str, fallback='en') {
+  const s = (str || '').toLowerCase();
+  if (BIS_I18N.subject[s]) return s;
+  const short = s.split('-')[0];
+  return BIS_I18N.subject[short] ? short : fallback;
+}
+function sub(tpl, vars){ return tpl.replace(/{{\s*(\w+)\s*}}/g, (_,k)=> (vars[k] ?? '')); }
+
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
   let { productId, name, startPrice, increment, endAt } = req.body;
@@ -428,7 +512,7 @@ app.post('/lottery/create', (req, res) => {
 
   db.run(
     `INSERT INTO products (productId, name, startPrice, increment, endAt)
-     VALUES (?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?)` ,
     [productId, name, Number(startPrice), Number(increment), endAt],
     function (err) {
       if (err) {
@@ -575,6 +659,84 @@ app.post('/lottery/draw/:productId', (req, res) => {
   });
 });
 
+// ---------- Back-in-Stock (BIS) endpoints ----------
+
+// Subscribe to BIS
+app.post('/bis/subscribe', (req, res) => {
+  let { email, productId, locale } = req.body || {};
+  if (!email || !productId) {
+    return res.status(400).json({ success:false, message:'Missing email or productId' });
+  }
+  email = String(email).trim().toLowerCase();
+  locale = normLocale(locale || 'en');
+
+  if (!isValidEmailFormat(email)) {
+    return res.status(400).json({ success:false, message:'Invalid email' });
+  }
+
+  db.run(
+    `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt) VALUES (?, ?, ?, datetime('now'))`,
+    [String(productId), email, locale],
+    (err) => {
+      if (err) {
+        console.error('BIS insert error', err);
+        return res.status(500).json({ success:false, message:'Server error' });
+      }
+      res.json({ success:true, message:'We’ll email you when it’s back.' });
+    }
+  );
+});
+
+// Notify all subscribers for a product (trigger manually / via Flow)
+// POST /bis/notify?pass=ADMIN_PASS
+// body: { productId, productTitle, productUrl, localeOverride? }
+app.post('/bis/notify', async (req, res) => {
+  const pass = req.query.pass || req.headers['x-admin-pass'];
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ success:false, message:'Forbidden' });
+  }
+
+  const { productId, productTitle, productUrl, localeOverride } = req.body || {};
+  if (!productId || !productTitle || !productUrl) {
+    return res.status(400).json({ success:false, message:'Missing productId/productTitle/productUrl' });
+  }
+
+  db.all(`SELECT email, locale FROM bis_requests WHERE productId = ?`, [String(productId)], async (err, rows) => {
+    if (err) {
+      console.error('BIS select error', err);
+      return res.status(500).json({ success:false, message:'DB error' });
+    }
+    if (!rows || !rows.length) {
+      return res.json({ success:true, sent:0, message:'No subscribers' });
+    }
+
+    let sent = 0, failed = 0;
+    for (const r of rows) {
+      const loc = pickLoc(localeOverride || r.locale || 'en');
+      const subj = sub(BIS_I18N.subject[loc] || BIS_I18N.subject.en, { title: productTitle });
+      const html = (BIS_I18N.body[loc] || BIS_I18N.body.en)(productTitle, productUrl);
+
+      try {
+        await mailer.sendMail({
+          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+          to: r.email,
+          subject: subj,
+          html
+        });
+        sent++;
+      } catch (e) {
+        console.error('BIS mail error', r.email, e);
+        failed++;
+      }
+    }
+
+    // Optional: clear subscriptions for this product after notifying
+    db.run(`DELETE FROM bis_requests WHERE productId = ?`, [String(productId)]);
+
+    res.json({ success:true, sent, failed });
+  });
+});
+
 // --- ADMIN: List all entries ---
 app.get('/admin/entries', (req, res) => {
   const pass = req.query.pass;
@@ -711,13 +873,13 @@ app.get('/lottery/count/:productId', (req, res) => {
 
 // ---------- Health checks ----------
 app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'lottery', version: 1 });
+  res.json({ ok: true, service: 'lottery+bis', version: 1 });
 });
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'lottery', version: 1 });
+  res.json({ ok: true, service: 'lottery+bis', version: 1 });
 });
 
 // ---------- Start server ----------
 app.listen(port, () => {
-  console.log(`✅ Lottery server running on http://localhost:${port}`);
+  console.log(`✅ Lottery/BIS server running on http://localhost:${port}`);
 });
