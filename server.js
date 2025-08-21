@@ -47,7 +47,7 @@ db.serialize(() => {
     )
   `);
 
-  // ✅ NEW: store winners so admin UI can display them later
+  // ✅ store winners so admin UI can display them later
   db.run(`
     CREATE TABLE IF NOT EXISTS winners (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,7 +208,7 @@ app.post('/lottery/enter', async (req, res) => {
           if (String(err).toLowerCase().includes('unique')) {
             return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
           }
-          console.error('DB insert error', err);
+        console.error('DB insert error', err);
           return res.status(500).json({ success: false, message: 'Server error' });
         }
         res.json({ success: true, message: 'You have been entered into the lottery!' });
@@ -218,6 +218,29 @@ app.post('/lottery/enter', async (req, res) => {
     console.error('Enter handler error', e);
     res.status(500).json({ success: false, message: 'Server error' });
   }
+});
+
+// ---------- NEW: ADMIN rename a lottery (change product name) ----------
+app.post('/lottery/update-name', (req, res) => {
+  const { productId, name, pass } = req.body || {};
+  if (!pass || pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ success: false, message: 'Forbidden' });
+  }
+  if (!productId || !name || !String(name).trim()) {
+    return res.status(400).json({ success: false, message: 'Missing productId or name' });
+  }
+
+  db.run(
+    `UPDATE products SET name = ? WHERE productId = ?`,
+    [String(name).trim(), productId],
+    function (err) {
+      if (err) {
+        console.error('Rename error:', err);
+        return res.status(500).json({ success: false, message: 'DB error' });
+      }
+      return res.json({ success: true, updated: this.changes });
+    }
+  );
 });
 
 // ---------- DRAW a winner (and email them) ----------
@@ -257,7 +280,7 @@ app.post('/lottery/draw/:productId', (req, res) => {
       `;
 
       try {
-        // ✅ Always store the winner, regardless of email outcome
+        // Always store the winner, regardless of email outcome
         await saveWinner(productId, winner.email);
 
         await mailer.sendMail({
@@ -394,7 +417,7 @@ app.get('/lottery/current/one', (req, res) => {
     FROM products
     WHERE endAt IS NULL OR datetime(endAt) > datetime('now')
     ORDER BY 
-      CASE WHEN endAt IS NULL OR endAt = '' THEN 1 ELSE 0 END,
+      CASE WHEN endAt IS NULL OR ENDAT = '' THEN 1 ELSE 0 END,
       endAt
     LIMIT 1
   `;
