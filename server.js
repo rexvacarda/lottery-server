@@ -47,6 +47,13 @@ db.serialize(() => {
     )
   `);
 
+  // --- Light migration: ensure entries.locale column exists (ignore error if already there)
+  db.run(`ALTER TABLE entries ADD COLUMN locale TEXT`, (err) => {
+    if (err && !String(err.message || err).toLowerCase().includes('duplicate column name')) {
+      console.warn('ALTER TABLE entries ADD COLUMN locale warning:', err.message || err);
+    }
+  });
+
   // Store winners so admin UI can display them later
   db.run(`
     CREATE TABLE IF NOT EXISTS winners (
@@ -115,6 +122,299 @@ function saveWinner(productId, email) {
   });
 }
 
+// Normalize locale key (e.g., "de-CH" -> "de")
+function normLocale(loc) {
+  if (!loc) return 'en';
+  return String(loc).toLowerCase();
+}
+function shortLocale(loc) {
+  const n = normLocale(loc);
+  return n.split('-')[0];
+}
+
+// Build i18n email (subject + html) based on locale
+function buildEmail(locale, title, claimLink) {
+  const l = normLocale(locale);
+  const s = shortLocale(l);
+
+  const t = {
+    en: {
+      subject: `You won: ${title}!`,
+      hello: `🎉 Congratulations!`,
+      body: `You’ve won the lottery for <strong>${title}</strong>.`,
+      ctaLead: `Click below to claim your prize:`,
+      cta: `Claim your prize`,
+      reply: `Please reply to this email to claim your prize.`,
+      copyHelp: `If the button doesn’t work, copy this link:`
+    },
+    de: {
+      subject: `Sie haben gewonnen: ${title}!`,
+      hello: `🎉 Herzlichen Glückwunsch!`,
+      body: `Sie haben die Verlosung für <strong>${title}</strong> gewonnen.`,
+      ctaLead: `Klicken Sie unten, um Ihren Gewinn einzulösen:`,
+      cta: `Gewinn einlösen`,
+      reply: `Bitte antworten Sie auf diese E-Mail, um Ihren Gewinn zu beanspruchen.`,
+      copyHelp: `Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link:`
+    },
+    fr: {
+      subject: `Vous avez gagné : ${title} !`,
+      hello: `🎉 Félicitations !`,
+      body: `Vous avez remporté la loterie pour <strong>${title}</strong>.`,
+      ctaLead: `Cliquez ci-dessous pour récupérer votre lot :`,
+      cta: `Récupérer mon lot`,
+      reply: `Veuillez répondre à cet e-mail pour récupérer votre lot.`,
+      copyHelp: `Si le bouton ne fonctionne pas, copiez ce lien :`
+    },
+    es: {
+      subject: `¡Has ganado: ${title}!`,
+      hello: `🎉 ¡Enhorabuena!`,
+      body: `Has ganado la lotería de <strong>${title}</strong>.`,
+      ctaLead: `Haz clic abajo para reclamar tu premio:`,
+      cta: `Reclamar premio`,
+      reply: `Responde a este correo para reclamar tu premio.`,
+      copyHelp: `Si el botón no funciona, copia este enlace:`
+    },
+    it: {
+      subject: `Hai vinto: ${title}!`,
+      hello: `🎉 Congratulazioni!`,
+      body: `Hai vinto la lotteria per <strong>${title}</strong>.`,
+      ctaLead: `Clicca qui sotto per riscattare il premio:`,
+      cta: `Riscatta il premio`,
+      reply: `Rispondi a questa email per riscattare il premio.`,
+      copyHelp: `Se il pulsante non funziona, copia questo link:`
+    },
+    nl: {
+      subject: `Je hebt gewonnen: ${title}!`,
+      hello: `🎉 Gefeliciteerd!`,
+      body: `Je hebt de loterij voor <strong>${title}</strong> gewonnen.`,
+      ctaLead: `Klik hieronder om je prijs te claimen:`,
+      cta: `Prijs claimen`,
+      reply: `Beantwoord deze e-mail om je prijs te claimen.`,
+      copyHelp: `Werkt de knop niet? Kopieer deze link:`
+    },
+    da: {
+      subject: `Du har vundet: ${title}!`,
+      hello: `🎉 Tillykke!`,
+      body: `Du har vundet lodtrækningen om <strong>${title}</strong>.`,
+      ctaLead: `Klik herunder for at få din præmie:`,
+      cta: `Hent præmien`,
+      reply: `Svar på denne e-mail for at få din præmie.`,
+      copyHelp: `Hvis knappen ikke virker, så kopier dette link:`
+    },
+    sv: {
+      subject: `Du har vunnit: ${title}!`,
+      hello: `🎉 Grattis!`,
+      body: `Du har vunnit lotteriet för <strong>${title}</strong>.`,
+      ctaLead: `Klicka nedan för att hämta ditt pris:`,
+      cta: `Hämta priset`,
+      reply: `Svara på detta mejl för att hämta ditt pris.`,
+      copyHelp: `Om knappen inte fungerar, kopiera denna länk:`
+    },
+    nb: {
+      subject: `Du har vunnet: ${title}!`,
+      hello: `🎉 Gratulerer!`,
+      body: `Du har vunnet lotteriet for <strong>${title}</strong>.`,
+      ctaLead: `Klikk nedenfor for å hente premien:`,
+      cta: `Hent premien`,
+      reply: `Svar på denne e-posten for å hente premien.`,
+      copyHelp: `Hvis knappen ikke fungerer, kopier denne lenken:`
+    },
+    fi: {
+      subject: `Voitit: ${title}!`,
+      hello: `🎉 Onnittelut!`,
+      body: `Voitit arvonnassa tuotteen <strong>${title}</strong>.`,
+      ctaLead: `Napsauta alta lunastaaksesi palkinnon:`,
+      cta: `Lunasta palkinto`,
+      reply: `Vastaa tähän sähköpostiin lunastaaksesi palkinnon.`,
+      copyHelp: `Ellei painike toimi, kopioi tämä linkki:`
+    },
+    pl: {
+      subject: `Wygrałeś/Wygrałaś: ${title}!`,
+      hello: `🎉 Gratulacje!`,
+      body: `Wygrałeś/Wygrałaś losowanie <strong>${title}</strong>.`,
+      ctaLead: `Kliknij poniżej, aby odebrać nagrodę:`,
+      cta: `Odbierz nagrodę`,
+      reply: `Odpowiedz na tę wiadomość, aby odebrać nagrodę.`,
+      copyHelp: `Jeśli przycisk nie działa, skopiuj ten link:`
+    },
+    pt: {
+      subject: `Você ganhou: ${title}!`,
+      hello: `🎉 Parabéns!`,
+      body: `Você ganhou o sorteio de <strong>${title}</strong>.`,
+      ctaLead: `Clique abaixo para resgatar o prêmio:`,
+      cta: `Resgatar prêmio`,
+      reply: `Responda a este e-mail para resgatar seu prêmio.`,
+      copyHelp: `Se o botão não funcionar, copie este link:`
+    },
+    cs: {
+      subject: `Vyhráli jste: ${title}!`,
+      hello: `🎉 Gratulujeme!`,
+      body: `Vyhráli jste v loterii o <strong>${title}</strong>.`,
+      ctaLead: `Klikněte níže pro převzetí výhry:`,
+      cta: `Vyžádat výhru`,
+      reply: `Odpovězte na tento e-mail pro převzetí výhry.`,
+      copyHelp: `Pokud tlačítko nefunguje, zkopírujte tento odkaz:`
+    },
+    sk: {
+      subject: `Vyhrali ste: ${title}!`,
+      hello: `🎉 Gratulujeme!`,
+      body: `Vyhrali ste v lotérii o <strong>${title}</strong>.`,
+      ctaLead: `Kliknite nižšie a vyzdvihnite si výhru:`,
+      cta: `Vyzdvihnúť výhru`,
+      reply: `Odpovedzte na tento e-mail, aby ste získali výhru.`,
+      copyHelp: `Ak tlačidlo nefunguje, skopírujte tento odkaz:`
+    },
+    sl: {
+      subject: `Zmagali ste: ${title}!`,
+      hello: `🎉 Čestitke!`,
+      body: `Zmagali ste v žrebanju za <strong>${title}</strong>.`,
+      ctaLead: `Kliknite spodaj za prevzem nagrade:`,
+      cta: `Prevzemi nagrado`,
+      reply: `Odgovorite na to e-pošto za prevzem nagrade.`,
+      copyHelp: `Če gumb ne deluje, kopirajte to povezavo:`
+    },
+    ro: {
+      subject: `Ai câștigat: ${title}!`,
+      hello: `🎉 Felicitări!`,
+      body: `Ai câștigat loteria pentru <strong>${title}</strong>.`,
+      ctaLead: `Apasă mai jos pentru a-ți revendica premiul:`,
+      cta: `Revendică premiul`,
+      reply: `Răspunde la acest e-mail pentru a-ți revendica premiul.`,
+      copyHelp: `Dacă butonul nu funcționează, copiază acest link:`
+    },
+    hu: {
+      subject: `Nyertél: ${title}!`,
+      hello: `🎉 Gratulálunk!`,
+      body: `Megnyerted a <strong>${title}</strong> sorsolását.`,
+      ctaLead: `Kattints lentebb a nyereményed átvételéhez:`,
+      cta: `Nyeremény átvétele`,
+      reply: `Válaszolj erre az e-mailre a nyereményed átvételéhez.`,
+      copyHelp: `Ha a gomb nem működik, másold ezt a hivatkozást:`
+    },
+    bg: {
+      subject: `Спечелихте: ${title}!`,
+      hello: `🎉 Поздравления!`,
+      body: `Вие спечелихте томболата за <strong>${title}</strong>.`,
+      ctaLead: `Кликнете по-долу, за да получите наградата:`,
+      cta: `Вземете наградата`,
+      reply: `Отговорете на този имейл, за да получите наградата.`,
+      copyHelp: `Ако бутонът не работи, копирайте този линк:`
+    },
+    el: {
+      subject: `Κερδίσατε: ${title}!`,
+      hello: `🎉 Συγχαρητήρια!`,
+      body: `Κερδίσατε την κλήρωση για <strong>${title}</strong>.`,
+      ctaLead: `Κάντε κλικ παρακάτω για να παραλάβετε το έπαθλο:`,
+      cta: `Παραλαβή επάθλου`,
+      reply: `Απαντήστε σε αυτό το email για να παραλάβετε το έπαθλο.`,
+      copyHelp: `Αν δεν λειτουργεί το κουμπί, αντιγράψτε αυτόν τον σύνδεσμο:`
+    },
+    tr: {
+      subject: `Kazandınız: ${title}!`,
+      hello: `🎉 Tebrikler!`,
+      body: `<strong>${title}</strong> çekilişini kazandınız.`,
+      ctaLead: `Ödülünüzü almak için aşağıya tıklayın:`,
+      cta: `Ödülü al`,
+      reply: `Ödülünüzü almak için bu e-postayı yanıtlayın.`,
+      copyHelp: `Düğme çalışmazsa bu bağlantıyı kopyalayın:`
+    },
+    ru: {
+      subject: `Вы выиграли: ${title}!`,
+      hello: `🎉 Поздравляем!`,
+      body: `Вы выиграли розыгрыш <strong>${title}</strong>.`,
+      ctaLead: `Нажмите ниже, чтобы получить приз:`,
+      cta: `Получить приз`,
+      reply: `Ответьте на это письмо, чтобы получить приз.`,
+      copyHelp: `Если кнопка не работает, скопируйте эту ссылку:`
+    },
+    ja: {
+      subject: `当選しました：${title}！`,
+      hello: `🎉 おめでとうございます！`,
+      body: `<strong>${title}</strong> の抽選に当選しました。`,
+      ctaLead: `賞品の受け取りは以下をクリック：`,
+      cta: `賞品を受け取る`,
+      reply: `このメールに返信して賞品を受け取ってください。`,
+      copyHelp: `ボタンが動作しない場合は、このリンクをコピーしてください：`
+    },
+    ko: {
+      subject: `당첨을 축하드립니다: ${title}!`,
+      hello: `🎉 축하합니다!`,
+      body: `<strong>${title}</strong> 추첨에 당첨되셨습니다.`,
+      ctaLead: `아래를 클릭해 상품을 수령하세요:`,
+      cta: `상품 수령하기`,
+      reply: `이 이메일에 회신하여 상품을 수령하세요.`,
+      copyHelp: `버튼이 작동하지 않으면 이 링크를 복사하세요:`
+    },
+    'zh-cn': {
+      subject: `您已中奖：${title}！`,
+      hello: `🎉 恭喜！`,
+      body: `您已中签 <strong>${title}</strong> 抽奖活动。`,
+      ctaLead: `点击下方领取奖品：`,
+      cta: `领取奖品`,
+      reply: `请回复此邮件以领取奖品。`,
+      copyHelp: `如果按钮无效，请复制此链接：`
+    },
+    'zh-tw': {
+      subject: `您中獎了：${title}！`,
+      hello: `🎉 恭喜！`,
+      body: `您已中籤 <strong>${title}</strong> 抽獎活動。`,
+      ctaLead: `點擊下方領取獎品：`,
+      cta: `領取獎品`,
+      reply: `請回覆此郵件以領取獎品。`,
+      copyHelp: `如果按鈕無法使用，請複製此連結：`
+    },
+    vi: {
+      subject: `Bạn đã trúng thưởng: ${title}!`,
+      hello: `🎉 Chúc mừng!`,
+      body: `Bạn đã trúng xổ số cho <strong>${title}</strong>.`,
+      ctaLead: `Nhấn bên dưới để nhận phần thưởng:`,
+      cta: `Nhận phần thưởng`,
+      reply: `Hãy trả lời email này để nhận phần thưởng.`,
+      copyHelp: `Nếu nút không hoạt động, hãy sao chép liên kết này:`
+    },
+    lt: {
+      subject: `Jūs laimėjote: ${title}!`,
+      hello: `🎉 Sveikiname!`,
+      body: `Laimėjote loteriją dėl <strong>${title}</strong>.`,
+      ctaLead: `Spustelėkite žemiau, kad atsiimtumėte prizą:`,
+      cta: `Atsiimti prizą`,
+      reply: `Atsakykite į šį el. laišką, kad atsiimtumėte prizą.`,
+      copyHelp: `Jei mygtukas neveikia, nukopijuokite šią nuorodą:`
+    },
+    hr: {
+      subject: `Pobijedili ste: ${title}!`,
+      hello: `🎉 Čestitamo!`,
+      body: `Pobijedili ste na nagradnoj igri za <strong>${title}</strong>.`,
+      ctaLead: `Kliknite dolje za preuzimanje nagrade:`,
+      cta: `Preuzmi nagradu`,
+      reply: `Odgovorite na ovaj e-mail kako biste preuzeli nagradu.`,
+      copyHelp: `Ako gumb ne radi, kopirajte ovu poveznicu:`
+    }
+  };
+
+  const pack = t[l] || t[s] || t.en;
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+      <h2>${pack.hello}</h2>
+      <p>${pack.body}</p>
+      ${
+        claimLink
+          ? `
+            <p>${pack.ctaLead}</p>
+            <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
+              ${pack.cta}
+            </a></p>
+            <p style="font-size:13px;color:#666">${pack.copyHelp}<br>${claimLink}</p>
+          `
+          : `<p>${pack.reply}</p>`
+      }
+    </div>
+  `;
+
+  return { subject: pack.subject, html };
+}
+
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
   let { productId, name, startPrice, increment, endAt } = req.body;
@@ -143,10 +443,13 @@ app.post('/lottery/create', (req, res) => {
 // ---------- ENTER a lottery (with validation + Shopify order check) ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
-    let { email, productId } = req.body;
+    let { email, productId, locale } = req.body;
     if (!email || !productId) {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
+
+    // defaults
+    locale = normLocale(locale || 'en');
 
     // normalize
     email = String(email).trim().toLowerCase();
@@ -201,8 +504,8 @@ app.post('/lottery/enter', async (req, res) => {
 
     // Insert (unique index prevents duplicate per product)
     db.run(
-      `INSERT INTO entries (productId, email) VALUES (?, ?)`,
-      [productId, email],
+      `INSERT INTO entries (productId, email, locale) VALUES (?, ?, ?)`,
+      [productId, email, locale],
       function (err) {
         if (err) {
           if (String(err).toLowerCase().includes('unique')) {
@@ -238,39 +541,24 @@ app.post('/lottery/draw/:productId', (req, res) => {
         ? `${claimPrefix}${productId}&email=${encodeURIComponent(winner.email)}`
         : null;
 
-      const html = `
-        <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
-          <h2>🎉 Congratulations!</h2>
-          <p>You’ve won the lottery for <strong>${title}</strong>.</p>
-          ${
-            claimLink
-              ? `
-                <p>Click below to claim your prize:</p>
-                <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
-                  Claim your prize
-                </a></p>
-                <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>
-              `
-              : `<p>Please reply to this email to claim your prize.</p>`
-          }
-        </div>
-      `;
-
       try {
         // Always store the winner, regardless of email outcome
         await saveWinner(productId, winner.email);
 
+        // Localized subject + body
+        const { subject, html } = buildEmail(winner.locale || 'en', title, claimLink);
+
         await mailer.sendMail({
           from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
           to: winner.email,
-          subject: `You won: ${title}!`,
+          subject,
           html
         });
 
         return res.json({
           success: true,
           message: `Winner drawn and emailed for product ${productId}`,
-          winner: { email: winner.email }
+          winner: { email: winner.email, locale: winner.locale || 'en' }
         });
       } catch (errMail) {
         console.error('Email error:', errMail);
@@ -280,7 +568,7 @@ app.post('/lottery/draw/:productId', (req, res) => {
           success: true,
           message: 'Winner drawn. Email could not be sent.',
           emailed: false,
-          winner: { email: winner.email }
+          winner: { email: winner.email, locale: winner.locale || 'en' }
         });
       }
     });
