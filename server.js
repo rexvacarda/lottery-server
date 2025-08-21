@@ -1,5 +1,5 @@
-// server.js (Lottery – per product)
-// Email, admin page, Shopify eligibility, MX validation, dedupe, public "current" endpoints
+// server.js (Lottery – per product, multi-run safe)
+// Scopes entries to the latest lottery run per productId using createdAt barriers.
 
 const express  = require('express');
 const cors     = require('cors');
@@ -18,11 +18,11 @@ app.use(cors());
 const mailer = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT || 587),
-  secure: String(process.env.EMAIL_PORT) === '465', // true if SSL (465)
+  secure: String(process.env.EMAIL_PORT) === '465',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-// ---------- SQLite DB (file) ----------
+// ---------- SQLite DB ----------
 const dbPath = process.env.DB_PATH || 'lottery.db';
 const db = new sqlite3.Database(dbPath);
 console.log('DB path in use:', dbPath);
@@ -35,7 +35,8 @@ db.serialize(() => {
       name TEXT,
       startPrice REAL,
       increment REAL,
-      endAt TEXT
+      endAt TEXT,
+      createdAt TEXT DEFAULT (datetime('now'))    -- identifies the "run"
     )
   `);
 
@@ -43,37 +44,35 @@ db.serialize(() => {
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       productId INTEGER,
-      email TEXT
+      email TEXT,
+      createdAt TEXT DEFAULT (datetime('now'))    -- used to scope into the active run
     )
   `);
 
-  // ✅ store winners so admin UI can display them later
+  // In-place migrations if DB existed before
+  db.run(`PRAGMA busy_timeout=3000`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email, createdAt)`);
+
+  // winners table (optional; keeps last winners)
   db.run(`
     CREATE TABLE IF NOT EXISTS winners (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       productId INTEGER,
       email TEXT,
-      drawnAt TEXT
+      drawnAt TEXT DEFAULT (datetime('now'))
     )
   `);
-
-  // Prevent duplicate entries (same product, same email)
-  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
 
 // ---------- Helpers ----------
 const BLOCKED_EMAIL_DOMAINS = (process.env.BLOCKED_EMAIL_DOMAINS || '')
-  .split(',')
-  .map(s => s.trim().toLowerCase())
-  .filter(Boolean);
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-// Basic email format
 function isValidEmailFormat(email) {
   const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
   return re.test(email);
 }
 
-// DNS helper with timeout
 async function withTimeout(promise, ms = 2000) {
   return await Promise.race([
     promise,
@@ -81,41 +80,55 @@ async function withTimeout(promise, ms = 2000) {
   ]);
 }
 
-// MX (or A) check for deliverability
 async function isDeliverableEmail(email) {
   const domain = String(email).split('@')[1]?.toLowerCase();
   if (!domain) return false;
-
   if (BLOCKED_EMAIL_DOMAINS.includes(domain)) return false;
-
   try {
     const mx = await withTimeout(dns.resolveMx(domain));
     if (Array.isArray(mx) && mx.length > 0) return true;
-  } catch (_) { /* fallthrough */ }
-
+  } catch {}
   try {
     const a = await withTimeout(dns.resolve(domain));
     if (Array.isArray(a) && a.length > 0) return true;
-  } catch (_) { }
-
+  } catch {}
   return false;
 }
 
-// Small helper to store winner (used in both success + failure email flows)
+function getActiveRun(productId, cb) {
+  // Latest run by createdAt for this productId
+  db.get(
+    `SELECT * FROM products
+     WHERE productId = ?
+     ORDER BY datetime(createdAt) DESC
+     LIMIT 1`,
+    [productId],
+    cb
+  );
+}
+
+function entriesForRunWhere(run) {
+  // Only entries added since this run started; stop at endAt if present
+  let where = `productId = ? AND datetime(createdAt) >= datetime(?)`;
+  const params = [run.productId, run.createdAt];
+  if (run.endAt) {
+    where += ` AND datetime(createdAt) <= datetime(?)`;
+    params.push(run.endAt);
+  }
+  return { where, params };
+}
+
 function saveWinner(productId, email) {
   return new Promise((resolve) => {
     db.run(
       `INSERT INTO winners (productId, email, drawnAt) VALUES (?, ?, datetime('now'))`,
       [productId, email],
-      (errW) => {
-        if (errW) console.error('Failed to store winner:', errW);
-        resolve(); // always resolve; we don't want to block the response
-      }
+      () => resolve()
     );
   });
 }
 
-// ---------- CREATE a product lottery ----------
+// ---------- CREATE a product lottery run ----------
 app.post('/lottery/create', (req, res) => {
   let { productId, name, startPrice, increment, endAt } = req.body;
 
@@ -127,8 +140,8 @@ app.post('/lottery/create', (req, res) => {
   if (increment == null || increment === '') increment = 0;
 
   db.run(
-    `INSERT INTO products (productId, name, startPrice, increment, endAt)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO products (productId, name, startPrice, increment, endAt, createdAt)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))`,
     [productId, name, Number(startPrice), Number(increment), endAt],
     function (err) {
       if (err) {
@@ -140,7 +153,7 @@ app.post('/lottery/create', (req, res) => {
   );
 });
 
-// ---------- ENTER a lottery (with validation + Shopify order check) ----------
+// ---------- ENTER a lottery (scoped to active run) ----------
 app.post('/lottery/enter', async (req, res) => {
   try {
     let { email, productId } = req.body;
@@ -148,28 +161,16 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
-    // normalize
     email = String(email).trim().toLowerCase();
-
-    // format + DNS deliverability
-    if (!isValidEmailFormat(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
-    }
+    if (!isValidEmailFormat(email)) return res.status(400).json({ success: false, message: 'Invalid email format' });
     const deliverable = await isDeliverableEmail(email);
-    if (!deliverable) {
-      return res.status(400).json({ success: false, message: 'Please enter a real email address' });
-    }
+    if (!deliverable) return res.status(400).json({ success: false, message: 'Please enter a real email address' });
 
-    // Shopify purchase check (guarded)
-    const shop  = process.env.SHOPIFY_STORE;          // e.g. smelltoimpress.myshopify.com
-    const token = process.env.SHOPIFY_ADMIN_API_KEY;  // Admin API token with read_orders
-    console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
-
+    // Optional Shopify eligibility (same as before)
+    const shop  = process.env.SHOPIFY_STORE;
+    const token = process.env.SHOPIFY_ADMIN_API_KEY;
     if (!shop || !token) {
-      return res.status(503).json({
-        success: false,
-        message: 'Eligibility check unavailable. Please try again later.'
-      });
+      return res.status(503).json({ success: false, message: 'Eligibility check unavailable. Please try again later.' });
     }
 
     const shopifyUrl =
@@ -183,207 +184,119 @@ app.post('/lottery/enter', async (req, res) => {
         'Accept': 'application/json'
       }
     });
-
     if (!resp.ok) {
       console.error('Shopify API error', resp.status, await resp.text());
       return res.status(503).json({ success: false, message: 'Eligibility check unavailable. Please try again later.' });
     }
-
     const data = await resp.json();
     const hasOrder = Array.isArray(data.orders) && data.orders.length > 0;
-
     if (!hasOrder) {
-      return res.status(200).json({
-        success: false,
-        message: 'Only customers with a past order can enter this lottery.'
-      });
+      return res.status(200).json({ success: false, message: 'Only customers with a past order can enter this lottery.' });
     }
 
-    // Insert (unique index prevents duplicate per product)
-    db.run(
-      `INSERT INTO entries (productId, email) VALUES (?, ?)`,
-      [productId, email],
-      function (err) {
-        if (err) {
-          if (String(err).toLowerCase().includes('unique')) {
-            return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
+    // Find the active run for this productId
+    getActiveRun(productId, (err, run) => {
+      if (err || !run) return res.status(404).json({ success: false, message: 'No lottery run found.' });
+
+      db.run(
+        `INSERT INTO entries (productId, email, createdAt) VALUES (?, ?, datetime('now'))`,
+        [productId, email],
+        function (e) {
+          if (e) {
+            if (String(e).toLowerCase().includes('unique')) {
+              // same productId+email+createdAt uniqueness can still collide only on same ms; ignore
+              return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
+            }
+            console.error('DB insert error', e);
+            return res.status(500).json({ success: false, message: 'Server error' });
           }
-        console.error('DB insert error', err);
-          return res.status(500).json({ success: false, message: 'Server error' });
+          res.json({ success: true, message: 'You have been entered into the lottery!' });
         }
-        res.json({ success: true, message: 'You have been entered into the lottery!' });
-      }
-    );
+      );
+    });
+
   } catch (e) {
     console.error('Enter handler error', e);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// ---------- NEW: ADMIN rename a lottery (change product name) ----------
-app.post('/lottery/update-name', (req, res) => {
-  const { productId, name, pass } = req.body || {};
-  if (!pass || pass !== process.env.ADMIN_PASS) {
-    return res.status(403).json({ success: false, message: 'Forbidden' });
-  }
-  if (!productId || !name || !String(name).trim()) {
-    return res.status(400).json({ success: false, message: 'Missing productId or name' });
-  }
-
-  db.run(
-    `UPDATE products SET name = ? WHERE productId = ?`,
-    [String(name).trim(), productId],
-    function (err) {
-      if (err) {
-        console.error('Rename error:', err);
-        return res.status(500).json({ success: false, message: 'DB error' });
-      }
-      return res.json({ success: true, updated: this.changes });
-    }
-  );
-});
-
-// ---------- DRAW a winner (and email them) ----------
+// ---------- DRAW a winner (scoped to the latest run) ----------
 app.post('/lottery/draw/:productId', (req, res) => {
   const productId = req.params.productId;
-  db.all(`SELECT * FROM entries WHERE productId = ?`, [productId], (err, rows) => {
-    if (err) return res.status(500).json({ success: false, message: 'Server error' });
-    if (!rows || rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'No entries for this product yet.' });
-    }
 
-    const winner = rows[Math.floor(Math.random() * rows.length)];
+  getActiveRun(productId, (err, run) => {
+    if (err || !run) return res.status(404).json({ success: false, message: 'No lottery run found.' });
 
-    db.get(`SELECT * FROM products WHERE productId = ?`, [productId], async (e2, product) => {
-      const title = product?.name || `Product ${productId}`;
+    const { where, params } = entriesForRunWhere(run);
+
+    db.all(`SELECT * FROM entries WHERE ${where}`, params, (e1, rows) => {
+      if (e1) return res.status(500).json({ success: false, message: 'Server error' });
+      if (!rows || rows.length === 0) return res.status(400).json({ success: false, message: 'No entries for this product yet.' });
+
+      const winner = rows[Math.floor(Math.random() * rows.length)];
+      const title = run?.name || `Product ${productId}`;
+
       const claimPrefix = process.env.CLAIM_URL_PREFIX || '';
-      const claimLink = claimPrefix
-        ? `${claimPrefix}${productId}&email=${encodeURIComponent(winner.email)}`
-        : null;
+      const claimLink = claimPrefix ? `${claimPrefix}${productId}&email=${encodeURIComponent(winner.email)}` : null;
 
       const html = `
         <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
           <h2>🎉 Congratulations!</h2>
           <p>You’ve won the lottery for <strong>${title}</strong>.</p>
-          ${
-            claimLink
-              ? `
-                <p>Click below to claim your prize:</p>
-                <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">
-                  Claim your prize
-                </a></p>
-                <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>
-              `
-              : `<p>Please reply to this email to claim your prize.</p>`
+          ${claimLink
+            ? `<p>Click below to claim your prize:</p>
+               <p><a href="${claimLink}" style="padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Claim your prize</a></p>
+               <p style="font-size:13px;color:#666">If the button doesn’t work, copy this link:<br>${claimLink}</p>`
+            : `<p>Please reply to this email to claim your prize.</p>`
           }
         </div>
       `;
 
-      try {
-        // Always store the winner, regardless of email outcome
-        await saveWinner(productId, winner.email);
-
-        await mailer.sendMail({
-          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-          to: winner.email,
-          subject: `You won: ${title}!`,
-          html
-        });
-
-        return res.json({
-          success: true,
-          message: `Winner drawn and emailed for product ${productId}`,
-          winner: { email: winner.email }
-        });
-      } catch (errMail) {
-        console.error('Email error:', errMail);
-
-        // Winner is already stored via saveWinner above
-        return res.status(200).json({
-          success: true,
-          message: 'Winner drawn. Email could not be sent.',
-          emailed: false,
-          winner: { email: winner.email }
-        });
-      }
+      (async () => {
+        try {
+          await saveWinner(productId, winner.email);
+          await mailer.sendMail({
+            from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+            to: winner.email,
+            subject: `You won: ${title}!`,
+            html
+          });
+          res.json({ success: true, message: `Winner drawn and emailed for product ${productId}`, winner: { email: winner.email } });
+        } catch (errMail) {
+          console.error('Email error:', errMail);
+          await saveWinner(productId, winner.email);
+          res.status(200).json({ success: true, message: 'Winner drawn. Email could not be sent.', emailed: false, winner: { email: winner.email } });
+        }
+      })();
     });
   });
 });
 
-// --- ADMIN: List all entries ---
-app.get('/admin/entries', (req, res) => {
-  const pass = req.query.pass;
-  if (pass !== process.env.ADMIN_PASS) {
-    return res.status(403).send('Forbidden: Wrong password');
-  }
-
-  db.all(`SELECT productId, email FROM entries ORDER BY productId, email`, [], (err, rows) => {
-    if (err) return res.status(500).send('DB error');
-
-    const counts = {};
-    rows.forEach(r => { counts[r.productId] = (counts[r.productId] || 0) + 1; });
-
-    let html = `<h2>Lottery Entries</h2>`;
-    html += `<p>Total entries: ${rows.length}</p>`;
-    html += `<ul>`;
-    for (const pid in counts) {
-      html += `<li>Product ${pid}: ${counts[pid]} entries</li>`;
-    }
-    html += `</ul>`;
-    html += `<table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Product ID</th><th>Email</th></tr>`;
-    rows.forEach(r => { html += `<tr><td>${r.productId}</td><td>${r.email}</td></tr>`; });
-    html += `</table>`;
-    res.send(html);
-  });
-});
-
-// --- ADMIN: repair entries (normalize + dedupe) ---
-app.post('/admin/repair-entries', (req, res) => {
-  const pass = req.query.pass;
-  if (pass !== process.env.ADMIN_PASS) {
-    return res.status(403).json({ ok: false, message: 'Forbidden' });
-  }
-  db.serialize(() => {
-    db.run(`UPDATE entries SET email = lower(trim(email))`);
-    db.run(`
-      DELETE FROM entries
-      WHERE rowid NOT IN (
-        SELECT MIN(rowid) FROM entries GROUP BY productId, email
-      )
-    `);
-    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
-  });
-  res.json({ ok: true, repaired: true });
-});
-
-// --- ADMIN: list lotteries with entries (includes last winnerEmail) ---
+// --- ADMIN: list latest run per productId with entry counts scoped to that run ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
-  if (pass !== process.env.ADMIN_PASS) {
-    return res.status(403).json({ ok: false, message: 'Forbidden' });
-  }
+  if (pass !== process.env.ADMIN_PASS) return res.status(403).json({ ok: false, message: 'Forbidden' });
 
   const sql = `
-    WITH lastw AS (
-      SELECT productId, MAX(drawnAt) AS lastDraw
-      FROM winners
+    WITH latest AS (
+      SELECT productId, MAX(datetime(createdAt)) AS startedAt
+      FROM products
       GROUP BY productId
     )
-    SELECT p.productId, p.name, p.endAt,
-           COUNT(e.id) AS entries,
-           w.email AS winnerEmail,
-           lastw.lastDraw
+    SELECT p.productId, p.name, p.endAt, p.createdAt,
+           COUNT(e.id) AS entries
     FROM products p
-    JOIN entries e ON e.productId = p.productId
-    LEFT JOIN lastw ON lastw.productId = p.productId
-    LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
+    JOIN latest L ON L.productId = p.productId AND datetime(p.createdAt) = datetime(L.startedAt)
+    LEFT JOIN entries e
+      ON e.productId = p.productId
+     AND datetime(e.createdAt) >= datetime(p.createdAt)
+     AND (p.endAt IS NULL OR datetime(e.createdAt) <= datetime(p.endAt))
     GROUP BY p.productId
-    HAVING entries > 0
     ORDER BY
       CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END,
       p.endAt
   `;
-
   db.all(sql, [], (err, rows) => {
     if (err) {
       console.error('SQL error /admin/lotteries:', err);
@@ -393,15 +306,21 @@ app.get('/admin/lotteries', (req, res) => {
   });
 });
 
-// --- PUBLIC: list current active lotteries (no admin password) ---
-app.get('/lottery/current', (req, res) => {
+// --- PUBLIC: list current active lotteries (latest run per product) ---
+app.get('/lottery/current', (_req, res) => {
   const sql = `
-    SELECT productId, name, endAt
-    FROM products
-    WHERE endAt IS NULL OR datetime(endAt) > datetime('now')
+    WITH latest AS (
+      SELECT productId, MAX(datetime(createdAt)) AS startedAt
+      FROM products
+      GROUP BY productId
+    )
+    SELECT p.productId, p.name, p.endAt, p.createdAt
+    FROM products p
+    JOIN latest L ON L.productId = p.productId AND datetime(p.createdAt) = datetime(L.startedAt)
+    WHERE p.endAt IS NULL OR datetime(p.endAt) > datetime('now')
     ORDER BY 
-      CASE WHEN endAt IS NULL OR endAt = '' THEN 1 ELSE 0 END,
-      endAt
+      CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END,
+      p.endAt
     LIMIT 10
   `;
   db.all(sql, [], (err, rows) => {
@@ -410,15 +329,20 @@ app.get('/lottery/current', (req, res) => {
   });
 });
 
-// --- PUBLIC: fetch only one active lottery (first upcoming one) ---
-app.get('/lottery/current/one', (req, res) => {
+app.get('/lottery/current/one', (_req, res) => {
   const sql = `
-    SELECT productId, name, endAt
-    FROM products
-    WHERE endAt IS NULL OR datetime(endAt) > datetime('now')
+    WITH latest AS (
+      SELECT productId, MAX(datetime(createdAt)) AS startedAt
+      FROM products
+      GROUP BY productId
+    )
+    SELECT p.productId, p.name, p.endAt, p.createdAt
+    FROM products p
+    JOIN latest L ON L.productId = p.productId AND datetime(p.createdAt) = datetime(L.startedAt)
+    WHERE p.endAt IS NULL OR datetime(p.endAt) > datetime('now')
     ORDER BY 
-      CASE WHEN endAt IS NULL OR ENDAT = '' THEN 1 ELSE 0 END,
-      endAt
+      CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END,
+      p.endAt
     LIMIT 1
   `;
   db.get(sql, [], (err, row) => {
@@ -428,31 +352,33 @@ app.get('/lottery/current/one', (req, res) => {
   });
 });
 
-// --- PUBLIC: get entry count for a product ---
+// --- PUBLIC: get entry count for the latest run of a product ---
 app.get('/lottery/count/:productId', (req, res) => {
   const productId = req.params.productId;
-  db.get(
-    `SELECT COUNT(*) AS c FROM entries WHERE productId = ?`,
-    [productId],
-    (err, row) => {
-      if (err) {
-        console.error('SQL error /lottery/count:', err);
-        return res.status(500).json({ success: false });
+
+  getActiveRun(productId, (err, run) => {
+    if (err || !run) return res.json({ success: true, totalEntries: 0 });
+
+    const { where, params } = entriesForRunWhere(run);
+    db.get(
+      `SELECT COUNT(*) AS c FROM entries WHERE ${where}`,
+      params,
+      (e, row) => {
+        if (e) {
+          console.error('SQL error /lottery/count:', e);
+          return res.status(500).json({ success: false });
+        }
+        res.json({ success: true, totalEntries: row?.c || 0 });
       }
-      res.json({ success: true, totalEntries: row?.c || 0 });
-    }
-  );
+    );
+  });
 });
 
-// ---------- Health checks ----------
-app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'lottery', version: 1 });
-});
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'lottery', version: 1 });
-});
+// ---------- Health ----------
+app.get('/', (_req, res) => { res.json({ ok: true, service: 'lottery', version: 2 }); });
+app.get('/health', (_req, res) => { res.json({ ok: true, service: 'lottery', version: 2 }); });
 
-// ---------- Start server ----------
+// ---------- Start ----------
 app.listen(port, () => {
   console.log(`✅ Lottery server running on http://localhost:${port}`);
 });
