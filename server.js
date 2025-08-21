@@ -246,9 +246,14 @@ app.post('/lottery/draw/:productId', (req, res) => {
           winner: { email: winner.email }
         });
       } catch (errMail) {
-        console.error('Email error:', errMail);
-        res.status(500).json({ success: false, message: 'Email failed', error: String(errMail) });
-      }
+  console.error('Email error:', errMail);
+  return res.status(200).json({
+    success: true,
+    message: 'Winner drawn. Email could not be sent.',
+    emailed: false,
+    winner: { email: winner.email }
+  });
+}
     });
   });
 });
