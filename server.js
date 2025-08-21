@@ -47,6 +47,16 @@ db.serialize(() => {
     )
   `);
 
+  // ✅ NEW: store winners so admin UI can display them later
+  db.run(`
+    CREATE TABLE IF NOT EXISTS winners (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      productId INTEGER,
+      email TEXT,
+      drawnAt TEXT
+    )
+  `);
+
   // Prevent duplicate entries (same product, same email)
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_unique ON entries (productId, email)`);
 });
@@ -89,6 +99,20 @@ async function isDeliverableEmail(email) {
   } catch (_) { }
 
   return false;
+}
+
+// Small helper to store winner (used in both success + failure email flows)
+function saveWinner(productId, email) {
+  return new Promise((resolve) => {
+    db.run(
+      `INSERT INTO winners (productId, email, drawnAt) VALUES (?, ?, datetime('now'))`,
+      [productId, email],
+      (errW) => {
+        if (errW) console.error('Failed to store winner:', errW);
+        resolve(); // always resolve; we don't want to block the response
+      }
+    );
+  });
 }
 
 // ---------- CREATE a product lottery ----------
@@ -233,6 +257,9 @@ app.post('/lottery/draw/:productId', (req, res) => {
       `;
 
       try {
+        // ✅ Always store the winner, regardless of email outcome
+        await saveWinner(productId, winner.email);
+
         await mailer.sendMail({
           from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
           to: winner.email,
@@ -240,20 +267,22 @@ app.post('/lottery/draw/:productId', (req, res) => {
           html
         });
 
-        res.json({
+        return res.json({
           success: true,
           message: `Winner drawn and emailed for product ${productId}`,
           winner: { email: winner.email }
         });
       } catch (errMail) {
-  console.error('Email error:', errMail);
-  return res.status(200).json({
-    success: true,
-    message: 'Winner drawn. Email could not be sent.',
-    emailed: false,
-    winner: { email: winner.email }
-  });
-}
+        console.error('Email error:', errMail);
+
+        // Winner is already stored via saveWinner above
+        return res.status(200).json({
+          success: true,
+          message: 'Winner drawn. Email could not be sent.',
+          emailed: false,
+          winner: { email: winner.email }
+        });
+      }
     });
   });
 });
@@ -304,7 +333,7 @@ app.post('/admin/repair-entries', (req, res) => {
   res.json({ ok: true, repaired: true });
 });
 
-// --- ADMIN: list lotteries with entries (for your admin table) ---
+// --- ADMIN: list lotteries with entries (includes last winnerEmail) ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
   if (pass !== process.env.ADMIN_PASS) {
@@ -312,10 +341,19 @@ app.get('/admin/lotteries', (req, res) => {
   }
 
   const sql = `
+    WITH lastw AS (
+      SELECT productId, MAX(drawnAt) AS lastDraw
+      FROM winners
+      GROUP BY productId
+    )
     SELECT p.productId, p.name, p.endAt,
-           COUNT(e.id) as entries
+           COUNT(e.id) AS entries,
+           w.email AS winnerEmail,
+           lastw.lastDraw
     FROM products p
     JOIN entries e ON e.productId = p.productId
+    LEFT JOIN lastw ON lastw.productId = p.productId
+    LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
     GROUP BY p.productId
     HAVING entries > 0
     ORDER BY
