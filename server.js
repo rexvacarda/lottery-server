@@ -757,10 +757,12 @@ app.post('/bis/subscribe', (req, res) => {
   if (!email || !productId) {
     return res.status(400).json({ success:false, message:'Missing email or productId' });
   }
-  email = String(email).trim().toLowerCase();
-  locale = normLocale(locale || 'en');
+  email  = String(email).trim().toLowerCase();
+  locale = (locale || 'en').toLowerCase();
 
-  if (!isValidEmailFormat(email)) {
+  // simple email format check (same as your lottery)
+  const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
+  if (!re.test(email)) {
     return res.status(400).json({ success:false, message:'Invalid email' });
   }
 
@@ -972,4 +974,8 @@ app.get('/health', (_req, res) => {
 // ---------- Start server ----------
 app.listen(port, () => {
   console.log(`✅ Lottery/BIS server running on http://localhost:${port}`);
+// at the bottom of server.js
+const host = '0.0.0.0';
+app.listen(port, host, () => {
+  console.log(`✅ Lottery/BIS server listening on ${host}:${port}`);
 });
