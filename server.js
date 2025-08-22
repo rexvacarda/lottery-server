@@ -1128,9 +1128,6 @@ app.get('/health', (_req, res) => {
 });
 
 // ---------- Start server ----------
-app.listen(port, () => {
-  console.log(`✅ Lottery/BIS server running on http://localhost:${port}`);
-// at the bottom of server.js
 const host = '0.0.0.0';
 app.listen(port, host, () => {
   console.log(`✅ Lottery/BIS server listening on ${host}:${port}`);
