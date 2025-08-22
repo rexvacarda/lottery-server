@@ -439,7 +439,129 @@ function buildEmail(locale, title, claimLink) {
 
   return { subject: pack.subject, html };
 }
+// --- Entry confirmation email (multi-language) ---
+function buildEntryConfirmEmail(locale, title) {
+  const l = normLocale(locale);
+  const s = shortLocale(l);
 
+  const t = {
+    en: {
+      subject: `You're in: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Thanks—your entry for <strong>${title}</strong> is confirmed.</p>
+               <p>We’ll draw at the deadline and email the winner.</p>
+             </div>`
+    },
+    de: {
+      subject: `Sie sind dabei: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Danke – Ihre Teilnahme für <strong>${title}</strong> wurde bestätigt.</p>
+               <p>Wir losen zum Stichtag aus und benachrichtigen den Gewinner per E-Mail.</p>
+             </div>`
+    },
+    fr: {
+      subject: `Participation confirmée : ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Merci — votre participation pour <strong>${title}</strong> est confirmée.</p>
+               <p>Nous tirerons au sort à l’échéance et préviendrons le gagnant par e-mail.</p>
+             </div>`
+    },
+    nl: {
+      subject: `Je doet mee: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Bedankt — je inschrijving voor <strong>${title}</strong> is bevestigd.</p>
+               <p>We loten op de einddatum en mailen de winnaar.</p>
+             </div>`
+    },
+    es: {
+      subject: `Estás dentro: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Gracias — tu participación en <strong>${title}</strong> está confirmada.</p>
+               <p>Haremos el sorteo en la fecha límite y enviaremos un correo al ganador.</p>
+             </div>`
+    },
+    it: {
+      subject: `Sei dentro: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Grazie — la tua partecipazione a <strong>${title}</strong> è confermata.</p>
+               <p>Eseguiremo l’estrazione alla scadenza e invieremo un’e-mail al vincitore.</p>
+             </div>`
+    },
+    ja: {
+      subject: `参加が確定しました：${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>ご応募ありがとうございます。<strong>${title}</strong> への参加が確認されました。</p>
+               <p>締め切り後に抽選を行い、当選者にメールでご連絡します。</p>
+             </div>`
+    },
+    ko: {
+      subject: `참여가 완료되었습니다: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>감사합니다. <strong>${title}</strong> 응모가 확인되었습니다.</p>
+               <p>마감 후 추첨하여 당첨자에게 이메일로 안내드립니다.</p>
+             </div>`
+    },
+    pl: {
+      subject: `Zgłoszenie przyjęte: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Dziękujemy — Twoje zgłoszenie do <strong>${title}</strong> zostało potwierdzone.</p>
+               <p>Losowanie odbędzie się w terminie końcowym, a zwycięzca otrzyma e-mail.</p>
+             </div>`
+    },
+    ro: {
+      subject: `Ești înscris: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Mulțumim — înscrierea ta pentru <strong>${title}</strong> a fost confirmată.</p>
+               <p>Vom face tragerea la sorți la termen și îl vom anunța pe câștigător prin e-mail.</p>
+             </div>`
+    },
+    bg: {
+      subject: `Участието ви е потвърдено: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Благодарим — участието ви за <strong>${title}</strong> е потвърдено.</p>
+               <p>Жребият ще бъде изтеглен на крайния срок и победителят ще получи имейл.</p>
+             </div>`
+    },
+    ar: {
+      subject: `تم تأكيد مشاركتك: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333;direction:rtl;text-align:right">
+               <p>شكرًا لك — تم تأكيد مشاركتك في <strong>${title}</strong>.</p>
+               <p>سنُجري السحب عند موعد الإغلاق ونرسل رسالة إلى الفائز عبر البريد الإلكتروني.</p>
+             </div>`
+    },
+    he: {
+      subject: `ההרשמה שלך אושרה: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333;direction:rtl;text-align:right">
+               <p>תודה — ההשתתפות שלך ב־<strong>${title}</strong> אושרה.</p>
+               <p>נבצע את ההגרלה במועד הסיום ונעדכן את הזוכה במייל.</p>
+             </div>`
+    },
+    sv: {
+      subject: `Du är med: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Tack — din anmälan till <strong>${title}</strong> är bekräftad.</p>
+               <p>Vi drar en vinnare vid sista datumet och mejlar vinnaren.</p>
+             </div>`
+    },
+    nb: {
+      subject: `Du er med: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Takk — påmeldingen din til <strong>${title}</strong> er bekreftet.</p>
+               <p>Vi trekker en vinner ved fristen og sender e-post til vinneren.</p>
+             </div>`
+    },
+    fi: {
+      subject: `Olet mukana: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Kiitos — osallistumisesi kohteeseen <strong>${title}</strong> on vahvistettu.</p>
+               <p>Arvonta suoritetaan määräaikana ja voittajalle lähetetään sähköposti.</p>
+             </div>`
+    }
+  };
+
+  const pack = t[l] || t[s] || t.en;
+  return { subject: pack.subject, html: pack.body };
+}
 // ---------- Back-in-Stock (BIS) translations & helpers ----------
 const BIS_I18N = {
   subject: {
@@ -544,11 +666,9 @@ app.post('/lottery/enter', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing email or productId' });
     }
 
-    // defaults
+    // defaults + normalize
     locale = normLocale(locale || 'en');
-
-    // normalize
-    email = String(email).trim().toLowerCase();
+    email  = String(email).trim().toLowerCase();
 
     // format + DNS deliverability
     if (!isValidEmailFormat(email)) {
@@ -562,8 +682,6 @@ app.post('/lottery/enter', async (req, res) => {
     // Shopify purchase check (guarded)
     const shop  = process.env.SHOPIFY_STORE;          // e.g. smelltoimpress.myshopify.com
     const token = process.env.SHOPIFY_ADMIN_API_KEY;  // Admin API token with read_orders
-    console.log('Shopify env check:', { shop: !!shop, token: token ? 'set' : 'missing' });
-
     if (!shop || !token) {
       return res.status(503).json({
         success: false,
@@ -605,11 +723,35 @@ app.post('/lottery/enter', async (req, res) => {
       function (err) {
         if (err) {
           if (String(err).toLowerCase().includes('unique')) {
+            // Already entered — still send a friendly OK
             return res.status(200).json({ success: true, message: 'You are already entered for this product.' });
           }
           console.error('DB insert error', err);
           return res.status(500).json({ success: false, message: 'Server error' });
         }
+
+        // Fire-and-forget: fetch product title and email the confirmation.
+        // This does NOT delay the API response.
+        try {
+          db.get(`SELECT name FROM products WHERE productId = ?`, [productId], async (_e2, row) => {
+            try {
+              const title = row?.name || `Product ${productId}`;
+              const { subject, html } = buildEntryConfirmEmail(locale, title);
+              await mailer.sendMail({
+                from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+                to: email,
+                subject,
+                html
+              });
+            } catch (mailErr) {
+              console.warn('Entry confirmation email failed (non-blocking):', mailErr?.message || mailErr);
+            }
+          });
+        } catch (e) {
+          console.warn('Post-insert confirm mail scheduling failed:', e?.message || e);
+        }
+
+        // Immediate API reply
         res.json({ success: true, message: 'You have been entered into the lottery!' });
       }
     );
