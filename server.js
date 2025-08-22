@@ -752,44 +752,34 @@ app.post('/bis/subscribe', async (req, res) => {
     return res.status(500).json({ ok:false, message:'Server error' });
   }
 });
+
 app.post('/bis/subscribe', (req, res) => {
-  try {
-    let { email, productId, product, product_handle, locale } = req.body || {};
+  let { email, productId, product_handle, variant_id, locale } = req.body || {};
 
-    // normalize
-    email  = String(email || '').trim().toLowerCase();
-    locale = (locale || 'en').toLowerCase();
-
-    // accept multiple field names and coerce to a single "pid" string
-    const pidRaw = productId ?? product ?? product_handle;
-    const pid    = pidRaw == null ? '' : String(pidRaw).trim();
-
-    if (!email || !pid) {
-      return res.status(400).json({ ok: false, success: false, message: 'Missing email or product' });
-    }
-
-    const emailFmt = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
-    if (!emailFmt.test(email)) {
-      return res.status(400).json({ ok: false, success: false, message: 'Invalid email' });
-    }
-
-    db.run(
-      `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt)
-       VALUES (?, ?, ?, datetime('now'))`,
-      [pid, email, locale],
-      (err) => {
-        if (err) {
-          console.error('BIS insert error', err);
-          return res.status(500).json({ ok: false, success: false, message: 'Server error' });
-        }
-        // return both flags for compatibility with old clients
-        res.json({ ok: true, success: true, message: 'We’ll email you when it’s back.' });
-      }
-    );
-  } catch (e) {
-    console.error('BIS subscribe error', e);
-    res.status(500).json({ ok: false, success: false, message: 'Server error' });
+  // Try to normalize product identifier
+  const pid = productId || variant_id || product_handle;
+  if (!email || !pid) {
+    return res.status(400).json({ success:false, message:'Missing email or product' });
   }
+
+  email = String(email).trim().toLowerCase();
+  locale = normLocale(locale || 'en');
+
+  if (!isValidEmailFormat(email)) {
+    return res.status(400).json({ success:false, message:'Invalid email' });
+  }
+
+  db.run(
+    `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt) VALUES (?, ?, ?, datetime('now'))`,
+    [String(pid), email, locale],
+    (err) => {
+      if (err) {
+        console.error('BIS insert error', err);
+        return res.status(500).json({ success:false, message:'Server error' });
+      }
+      res.json({ success:true, message:'We’ll email you when it’s back.' });
+    }
+  );
 });
 
 // Notify all subscribers for a product (trigger manually / via Flow)
