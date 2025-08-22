@@ -48,6 +48,18 @@ db.serialize(() => {
     )
   `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS bis_subscribers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    product_handle TEXT,
+    product_title TEXT,
+    variant_id TEXT,
+    locale TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
   // --- Light migration: ensure entries.locale column exists (ignore error if already there)
   db.run(`ALTER TABLE entries ADD COLUMN locale TEXT`, (err) => {
     if (err && !String(err.message || err).toLowerCase().includes('duplicate column name')) {
@@ -662,6 +674,84 @@ app.post('/lottery/draw/:productId', (req, res) => {
 // ---------- Back-in-Stock (BIS) endpoints ----------
 
 // Subscribe to BIS
+app.post('/bis/subscribe', async (req, res) => {
+  try {
+    let { email, product_handle, product_title, variant_id, locale } = req.body || {};
+    if (!email || !product_handle) {
+      return res.status(400).json({ ok:false, message:'Missing email or product' });
+    }
+
+    email  = String(email).trim().toLowerCase();
+    locale = (locale || 'en').toLowerCase();
+
+    if (!isValidEmailFormat(email)) {
+      return res.status(400).json({ ok:false, message:'Invalid email format' });
+    }
+    const deliverable = await isDeliverableEmail(email);
+    if (!deliverable) {
+      return res.status(400).json({ ok:false, message:'Please enter a real email address' });
+    }
+
+    db.run(
+      `INSERT INTO bis_subscribers (email, product_handle, product_title, variant_id, locale)
+       VALUES (?, ?, ?, ?, ?)`,
+      [ email, product_handle, product_title || '', String(variant_id || ''), locale ],
+      (err) => {
+        if (err) console.error('BIS insert error:', err);
+      }
+    );
+
+    // --- email the subscriber (confirmation) + optionally notify store owner
+    const ownerTo = process.env.BIS_NOTIFY_TO || process.env.FROM_EMAIL || process.env.EMAIL_USER;
+
+    const packs = {
+      en: {
+        sub: 'We’ll notify you when it’s back',
+        body: `You’ll receive an email as soon as <strong>${product_title || product_handle}</strong> is back in stock.`
+      },
+      de: {
+        sub: 'Wir benachrichtigen Sie bei Verfügbarkeit',
+        body: `Sobald <strong>${product_title || product_handle}</strong> wieder verfügbar ist, erhalten Sie eine E-Mail.`
+      }
+    };
+    const short = locale.split('-')[0];
+    const p = packs[locale] || packs[short] || packs.en;
+
+    const htmlCustomer = `
+      <div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+        <p>${p.body}</p>
+      </div>
+    `;
+
+    try {
+      // confirmation to subscriber
+      await mailer.sendMail({
+        from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+        to: email,
+        subject: p.sub,
+        html: htmlCustomer
+      });
+
+      // internal heads-up (optional)
+      if (ownerTo) {
+        await mailer.sendMail({
+          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+          to: ownerTo,
+          subject: `BIS signup: ${product_title || product_handle}`,
+          html: `<div>New BIS request<br>Email: ${email}<br>Product: ${product_title || product_handle}<br>Variant: ${variant_id || '-' }<br>Locale: ${locale}</div>`
+        });
+      }
+    } catch (mailErr) {
+      console.error('BIS mail error:', mailErr);
+      // Don’t fail the request just because email failed
+    }
+
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('BIS subscribe error:', e);
+    return res.status(500).json({ ok:false, message:'Server error' });
+  }
+});
 app.post('/bis/subscribe', (req, res) => {
   let { email, productId, locale } = req.body || {};
   if (!email || !productId) {
