@@ -753,30 +753,43 @@ app.post('/bis/subscribe', async (req, res) => {
   }
 });
 app.post('/bis/subscribe', (req, res) => {
-  let { email, productId, locale } = req.body || {};
-  if (!email || !productId) {
-    return res.status(400).json({ success:false, message:'Missing email or productId' });
-  }
-  email  = String(email).trim().toLowerCase();
-  locale = (locale || 'en').toLowerCase();
+  try {
+    let { email, productId, product, product_handle, locale } = req.body || {};
 
-  // simple email format check (same as your lottery)
-  const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
-  if (!re.test(email)) {
-    return res.status(400).json({ success:false, message:'Invalid email' });
-  }
+    // normalize
+    email  = String(email || '').trim().toLowerCase();
+    locale = (locale || 'en').toLowerCase();
 
-  db.run(
-    `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt) VALUES (?, ?, ?, datetime('now'))`,
-    [String(productId), email, locale],
-    (err) => {
-      if (err) {
-        console.error('BIS insert error', err);
-        return res.status(500).json({ success:false, message:'Server error' });
-      }
-      res.json({ success:true, message:'We’ll email you when it’s back.' });
+    // accept multiple field names and coerce to a single "pid" string
+    const pidRaw = productId ?? product ?? product_handle;
+    const pid    = pidRaw == null ? '' : String(pidRaw).trim();
+
+    if (!email || !pid) {
+      return res.status(400).json({ ok: false, success: false, message: 'Missing email or product' });
     }
-  );
+
+    const emailFmt = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
+    if (!emailFmt.test(email)) {
+      return res.status(400).json({ ok: false, success: false, message: 'Invalid email' });
+    }
+
+    db.run(
+      `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt)
+       VALUES (?, ?, ?, datetime('now'))`,
+      [pid, email, locale],
+      (err) => {
+        if (err) {
+          console.error('BIS insert error', err);
+          return res.status(500).json({ ok: false, success: false, message: 'Server error' });
+        }
+        // return both flags for compatibility with old clients
+        res.json({ ok: true, success: true, message: 'We’ll email you when it’s back.' });
+      }
+    );
+  } catch (e) {
+    console.error('BIS subscribe error', e);
+    res.status(500).json({ ok: false, success: false, message: 'Server error' });
+  }
 });
 
 // Notify all subscribers for a product (trigger manually / via Flow)
