@@ -2,6 +2,7 @@
 // Email, admin page, Shopify eligibility, MX validation, dedupe, public "current" endpoints
 
 const express  = require('express');
+const crypto = require('crypto');
 const cors     = require('cors');
 const sqlite3  = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
@@ -20,6 +21,37 @@ const mailer = nodemailer.createTransport({
   port: Number(process.env.EMAIL_PORT || 587),
   secure: String(process.env.EMAIL_PORT) === '465', // true if SSL (465)
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+
+// GET /u?e=<email>&t=<token>
+app.get('/u', (req, res) => {
+  const email = normEmail(req.query.e);
+  const token = String(req.query.t || '');
+
+  if (!email || !verifyUnsub(email, token)) {
+    return res.status(400).send(`
+      <div style="font:16px Arial,sans-serif;color:#333">
+        <p>Invalid or expired unsubscribe link.</p>
+      </div>
+    `);
+  }
+
+  db.run(
+    `INSERT OR IGNORE INTO unsubscribes (email) VALUES (?)`,
+    [email],
+    (err) => {
+      if (err) {
+        console.error('Unsubscribe DB error:', err);
+        return res.status(500).send(`<div style="font:16px Arial,sans-serif;color:#333">Server error.</div>`);
+      }
+      return res.send(`
+        <div style="font:16px Arial,sans-serif;color:#333">
+          <h2 style="margin:0 0 10px 0">You’ve been unsubscribed</h2>
+          <p>${email} will no longer receive marketing emails from us.</p>
+        </div>
+      `);
+    }
+  );
 });
 
 // === ADMIN BROADCAST FROM SHOPIFY CUSTOMERS (HTML email, by language) ===
@@ -278,6 +310,13 @@ db.serialize(() => {
       locale TEXT
     )
   `);
+
+  db.run(`
+  CREATE TABLE IF NOT EXISTS unsubscribes (
+    email TEXT PRIMARY KEY,
+    createdAt TEXT DEFAULT (datetime('now'))
+  )
+`);
 
 db.run(`
   CREATE TABLE IF NOT EXISTS bis_subscribers (
@@ -1350,6 +1389,27 @@ app.get('/lottery/count/:productId', (req, res) => {
   );
 });
 
+// === Unsubscribe endpoint ===
+app.get('/u', (req, res) => {
+  const { e, t } = req.query;
+  const secret = process.env.UNSUB_SECRET || process.env.ADMIN_PASS || 'change-me';
+
+  if (!e || !t) return res.status(400).send('Invalid link');
+
+  const check = crypto.createHmac('sha256', secret)
+    .update(e.toLowerCase())
+    .digest('hex')
+    .slice(0, 32);
+
+  if (check !== t) return res.status(403).send('Invalid token');
+
+  // remove from BIS + entries
+  db.run(`DELETE FROM bis_requests WHERE email = ?`, [e.toLowerCase()]);
+  db.run(`DELETE FROM entries WHERE email = ?`, [e.toLowerCase()]);
+
+  res.send('<h2>You have been unsubscribed.</h2>');
+});
+
 // ---------- Health checks ----------
 app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'lottery+bis', version: 1 });
@@ -1357,6 +1417,65 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'lottery+bis', version: 1 });
 });
+
+// ===== Unsubscribe helpers =====
+function normEmail(e){ return String(e || '').trim().toLowerCase(); }
+
+function signUnsub(email) {
+  const secret = process.env.UNSUBSCRIBE_SECRET || 'change-me';
+  return crypto.createHmac('sha256', secret)
+    .update(normEmail(email))
+    .digest('hex')
+    .slice(0, 32); // short but strong signature
+}
+
+function buildUnsubLink(email) {
+  const base = (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/+$/,'');
+  const t = signUnsub(email);
+  return `${base}/u?e=${encodeURIComponent(normEmail(email))}&t=${t}`;
+}
+
+function verifyUnsub(email, token) {
+  return token && token === signUnsub(email);
+}
+
+function isUnsubscribed(email) {
+  return new Promise((resolve, reject) => {
+    db.get(`SELECT 1 FROM unsubscribes WHERE email = ? LIMIT 1`, [normEmail(email)], (err, row) => {
+      if (err) return reject(err);
+      resolve(!!row);
+    });
+  });
+}
+
+// Inject CAN-SPAM footer + List-Unsubscribe header
+function withUnsubFooter(html, email) {
+  const link = buildUnsubLink(email);
+  const brand = process.env.BRAND_NAME || 'our store';
+  const footer = `
+    <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+    <p style="font:13px/1.45 Arial,sans-serif;color:#666;margin:0">
+      You’re receiving this because you subscribed at ${brand}.
+      <a href="${link}">Unsubscribe</a>.
+    </p>`;
+
+  if (/<\/body>\s*<\/html>\s*$/i.test(html)) {
+    return html.replace(/<\/body>\s*<\/html>\s*$/i, `${footer}</body></html>`);
+  }
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${footer}</body>`);
+  }
+  return html + footer;
+}
+
+// Create nodemailer "List-Unsubscribe" header for mailbox providers
+function listUnsubHeader(email) {
+  const httpLink = buildUnsubLink(email);
+  const mailto = process.env.UNSUBSCRIBE_MAILTO || ''; // optional, e.g. "unsubscribe@yourdomain.com"
+  return mailto
+    ? `<mailto:${mailto}>, <${httpLink}>`
+    : `<${httpLink}>`;
+}
 
 // ---------- Start server ----------
 const host = '0.0.0.0';
