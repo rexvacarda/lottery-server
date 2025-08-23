@@ -303,15 +303,6 @@ db.serialize(() => {
     )
   `);
 
-  // Unsubscribed email addresses
-db.run(`
-  CREATE TABLE IF NOT EXISTS unsubscribes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE,
-    created_at TEXT DEFAULT (datetime('now'))
-  )
-`);
-
   db.run(`
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -320,6 +311,13 @@ db.run(`
       locale TEXT
     )
   `);
+
+  db.run(`
+  CREATE TABLE IF NOT EXISTS unsubscribes (
+    email TEXT PRIMARY KEY,
+    createdAt TEXT DEFAULT (datetime('now'))
+  )
+`);
 
 db.run(`
   CREATE TABLE IF NOT EXISTS bis_subscribers (
@@ -993,82 +991,6 @@ function pickLoc(str, fallback='en') {
 }
 function sub(tpl, vars){ return tpl.replace(/{{\s*(\w+)\s*}}/g, (_,k)=> (vars[k] ?? '')); }
 
-// ===== Unsubscribe helpers =====
-const crypto = require('crypto');
-
-function normEmail(e){ return String(e || '').trim().toLowerCase(); }
-
-const UNSUB_SECRET = process.env.UNSUB_SECRET || 'change-me'; // one consistent name
-
-function signUnsub(email) {
-  return crypto
-    .createHmac('sha256', UNSUB_SECRET)
-    .update(normEmail(email))
-    .digest('hex')
-    .slice(0, 32); // short but strong
-}
-
-function buildUnsubLink(email) {
-  const base =
-    (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.replace(/\/+$/,'')) ||
-    `http://localhost:${process.env.PORT || 3005}`;
-  const t = signUnsub(email);
-  return `${base}/u?e=${encodeURIComponent(normEmail(email))}&t=${t}`;
-}
-
-function verifyUnsub(email, token) {
-  if (!token) return false;
-  try {
-    const expected = signUnsub(email);
-    // constant-time compare
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(String(token)));
-  } catch {
-    return false;
-  }
-}
-
-function isUnsubscribed(email) {
-  return new Promise((resolve, reject) => {
-    db.get(
-      `SELECT 1 FROM unsubscribes WHERE email = ? LIMIT 1`,
-      [normEmail(email)],
-      (err, row) => {
-        if (err) return reject(err);
-        resolve(!!row);
-      }
-    );
-  });
-}
-
-// Inject CAN-SPAM footer + List-Unsubscribe link
-function withUnsubFooter(html, email) {
-  const link = buildUnsubLink(email);
-  const brand = process.env.BRAND_NAME || 'our store';
-  const footer = `
-    <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-    <p style="font:13px/1.45 Arial,sans-serif;color:#666;margin:0">
-      You’re receiving this because you subscribed at ${brand}.
-      <a href="${link}">Unsubscribe</a>.
-    </p>`;
-
-  if (/<\/body>\s*<\/html>\s*$/i.test(html)) {
-    return html.replace(/<\/body>\s*<\/html>\s*$/i, `${footer}</body></html>`);
-  }
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${footer}</body>`);
-  }
-  return (html || '') + footer;
-}
-
-// RFC List-Unsubscribe header for mailbox providers
-function listUnsubHeader(email) {
-  const httpLink = buildUnsubLink(email);
-  const mailto = (process.env.UNSUBSCRIBE_MAILTO || '').trim(); // e.g. unsubscribe@yourdomain.com
-  return mailto
-    ? `<mailto:${mailto}>, <${httpLink}>`
-    : `<${httpLink}>`;
-}
-
 // ---------- CREATE a product lottery ----------
 app.post('/lottery/create', (req, res) => {
   let { productId, name, startPrice, increment, endAt } = req.body;
@@ -1331,6 +1253,40 @@ app.post('/bis/subscribe', async (req, res) => {
   }
 });
 
+app.post('/bis/subscribe', (req, res) => {
+  try {
+    // Defensive log to verify the incoming body on Render
+    console.log('[BIS] raw body:', typeof req.body, JSON.stringify(req.body || {}).slice(0, 500));
+
+    let { email, productId, variant_id, product_handle, locale } = req.body || {};
+
+    // Normalize product identifier: accept any of these keys
+    const pid = productId || variant_id || product_handle;
+
+    if (!email || !pid) {
+      console.warn('[BIS] missing fields:', { emailPresent: !!email, pidPresent: !!pid });
+      return res.status(400).json({ success: false, message: 'Missing email or product' });
+    }
+
+    email = String(email).trim().toLowerCase();
+    locale = normLocale(locale || 'en');
+
+    if (!isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, message: 'Invalid email' });
+    }
+
+    db.run(
+      `INSERT OR IGNORE INTO bis_requests (productId, email, locale, createdAt)
+       VALUES (?, ?, ?, datetime('now'))`,
+      [String(pid), email, locale],
+      (err) => {
+        if (err) {
+          console.error('[BIS] insert error:', err);
+          return res.status(500).json({ success: false, message: 'Server error' });
+        }
+        return res.json({ success: true, message: 'We’ll email you when it’s back.' });
+      }
+    );
   } catch (e) {
     console.error('[BIS] handler crash:', e);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -1470,212 +1426,225 @@ app.get('/admin/lotteries', (req, res) => {
   });
 });
 
-// ===================== ADMIN BULK EMAIL (Shopify customers) =====================
+// GET /admin/email — simple admin UI to send HTML emails to customers
+app.get('/admin/email', (req, res) => {
+  const pass = req.query.pass;
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).send('Forbidden: Wrong password');
+  }
 
-// Small helper: auth gate via ADMIN_PASS
-function isAdmin(req) {
-  const pass = req.query.pass || req.body?.pass || req.headers['x-admin-pass'];
-  return pass && pass === process.env.ADMIN_PASS;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Bulk email sender</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.4;margin:24px;color:#222}
+  h1{font-size:22px;margin:0 0 16px}
+  form{display:grid;gap:12px;max-width:900px}
+  .row{display:grid;gap:10px;grid-template-columns:1fr 1fr}
+  label{font-weight:600;font-size:14px}
+  input[type="text"],select,textarea{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font:inherit}
+  textarea{min-height:220px}
+  .hint{font-size:12px;color:#666}
+  .btn{background:#111;color:#fff;border:1px solid #111;border-radius:10px;padding:12px 16px;cursor:pointer}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .box{border:1px dashed #ddd;border-radius:10px;padding:10px}
+  .badge{display:inline-block;background:#eee;border-radius:999px;padding:4px 8px;font-size:12px}
+  .ok{color:#0a7a3c}.err{color:#b3261e}
+  .grid2{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+</style>
+</head>
+<body>
+  <h1>Bulk email sender</h1>
+  <p class="hint">Admin tip: keep batches small while testing. The server appends an unsubscribe footer and List-Unsubscribe headers automatically.</p>
+
+  <form id="f">
+    <div class="row">
+      <div>
+        <label>Subject</label>
+        <input id="subject" type="text" placeholder="Your email subject">
+      </div>
+      <div>
+        <label>Language segment</label>
+        <select id="locale">
+          <option value="">All languages</option>
+          <option value="en">English</option>
+          <option value="de">German</option>
+          <option value="fr">French</option>
+          <option value="nl">Dutch</option>
+          <option value="es">Spanish</option>
+          <option value="it">Italian</option>
+          <option value="sv">Swedish</option>
+          <option value="nb">Norwegian (Bokmål)</option>
+          <option value="fi">Finnish</option>
+          <option value="pl">Polish</option>
+          <option value="ro">Romanian</option>
+          <option value="bg">Bulgarian</option>
+          <option value="ar">Arabic</option>
+          <option value="he">Hebrew</option>
+          <option value="ja">Japanese</option>
+          <option value="ko">Korean</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Batch size (per request)</label>
+        <input id="limit" type="text" value="500">
+        <div class="hint">Max customers to send in this run (server will page Shopify).</div>
+      </div>
+      <div>
+        <label>Test mode</label>
+        <select id="dry">
+          <option value="1">Dry-run (no emails sent)</option>
+          <option value="0">Send for real</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label>HTML body</label>
+      <textarea id="html" placeholder="Paste your HTML here"></textarea>
+      <div class="hint">We will append an unsubscribe footer automatically.</div>
+    </div>
+
+    <div class="grid2">
+      <button class="btn" type="submit">Send</button>
+      <span id="status" class="badge">idle</span>
+    </div>
+  </form>
+
+  <div class="box" id="log"></div>
+
+<script>
+const f = document.getElementById('f');
+const log = document.getElementById('log');
+const statusEl = document.getElementById('status');
+
+function addLog(msg, cls){
+  const p = document.createElement('div');
+  if (cls) p.className = cls;
+  p.textContent = msg;
+  log.prepend(p);
 }
 
-// Render a super-simple HTML form for composing & sending
-app.get('/admin/email', (req, res) => {
-  if (!isAdmin(req)) return res.status(403).send('Forbidden');
-
-  res.send(`
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <div style="max-width:900px;margin:24px auto;font:16px/1.45 Arial,sans-serif;color:#222">
-      <h2 style="margin:0 0 12px">Bulk Email (Shopify Customers)</h2>
-      <form method="POST" action="/admin/email">
-        <input type="hidden" name="pass" value="${(req.query.pass || '')}">
-        <div style="margin:12px 0">
-          <label>Segment (language / locale short):</label>
-          <select name="segment" style="padding:8px">
-            <option value="">All customers</option>
-            <option value="en">English</option>
-            <option value="de">Deutsch</option>
-            <option value="fr">Français</option>
-            <option value="es">Español</option>
-            <option value="it">Italiano</option>
-            <option value="nl">Nederlands</option>
-            <option value="sv">Svenska</option>
-            <option value="nb">Norsk</option>
-            <option value="fi">Suomi</option>
-            <option value="pl">Polski</option>
-            <option value="ro">Română</option>
-            <option value="bg">Български</option>
-            <option value="ar">العربية</option>
-            <option value="he">עברית</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="pt">Português</option>
-            <option value="cs">Čeština</option>
-            <option value="sk">Slovenčina</option>
-            <option value="sl">Slovenščina</option>
-            <option value="tr">Türkçe</option>
-            <option value="ru">Русский</option>
-            <option value="vi">Tiếng Việt</option>
-            <option value="lt">Lietuvių</option>
-            <option value="hr">Hrvatski</option>
-          </select>
-          <small style="color:#666;display:block">We match against Shopify customer.locale’s **short** code (e.g. “de”, “fr”). If blank, we send to all.</small>
-        </div>
-
-        <div style="margin:12px 0">
-          <label>Subject</label><br>
-          <input name="subject" required style="width:100%;padding:10px" placeholder="Your subject">
-        </div>
-
-        <div style="margin:12px 0">
-          <label>HTML</label><br>
-          <textarea name="html" required rows="14" style="width:100%;padding:10px;font-family:monospace"></textarea>
-          <small style="color:#666;display:block">We’ll automatically append the unsubscribe footer + add a List-Unsubscribe header.</small>
-        </div>
-
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin:12px 0">
-          <label>Max recipients (this run):
-            <input type="number" name="limit" value="500" min="1" max="10000" style="width:120px;padding:8px">
-          </label>
-          <label>Start after customer ID (advanced pagination):
-            <input type="number" name="since_id" value="0" style="width:160px;padding:8px">
-          </label>
-          <label><input type="checkbox" name="dry" checked> Dry run (don’t send; show a preview list)</label>
-          <label>Test to (optional email):
-            <input type="email" name="test_to" placeholder="you@example.com" style="width:220px;padding:8px">
-          </label>
-        </div>
-
-        <button type="submit" style="padding:10px 16px;background:#111;color:#fff;border:0;border-radius:6px">Send</button>
-      </form>
-    </div>
-  `);
+f.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const body = {
+    subject: document.getElementById('subject').value.trim(),
+    html: document.getElementById('html').value,
+    locale: document.getElementById('locale').value.trim(),
+    limit: parseInt(document.getElementById('limit').value, 10) || 500,
+    dryRun: document.getElementById('dry').value === '1'
+  };
+  statusEl.textContent = 'working…';
+  try{
+    const r = await fetch('/admin/email?pass=${encodeURIComponent(process.env.ADMIN_PASS || '')}', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const out = await r.json();
+    if (r.ok){
+      statusEl.textContent = 'done';
+      addLog('OK: sent=' + (out.sent||0) + ', skipped=' + (out.skipped||0) + ', failed=' + (out.failed||0), 'ok');
+    } else {
+      statusEl.textContent = 'error';
+      addLog('Error: ' + (out.message || r.status), 'err');
+    }
+  } catch(err){
+    statusEl.textContent = 'error';
+    addLog('Network error: ' + (err && err.message ? err.message : err), 'err');
+  }
+});
+</script>
+</body>
+</html>`);
 });
 
-// Fetch a batch of Shopify customers
-async function fetchShopifyCustomers({ limit = 250, since_id = 0 } = {}) {
-  const shop  = process.env.SHOPIFY_STORE;         // e.g. creedperfumesamples.myshopify.com
-  const token = process.env.SHOPIFY_ADMIN_API_KEY; // private app token
-
-  if (!shop || !token) throw new Error('SHOPIFY env missing');
-
-  // We use the stable 2024-07 or newer – you already have 2024-07 working.
-  const url =
-    `https://${shop}/admin/api/2024-07/customers.json?limit=${Math.min(+limit || 250, 250)}&since_id=${since_id}`;
-
-  const r = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'X-Shopify-Access-Token': token,
-      'Accept': 'application/json'
-    }
-  });
-  if (!r.ok) {
-    const txt = await r.text().catch(()=> '');
-    throw new Error(`Shopify customers fetch failed: ${r.status} ${txt}`);
-  }
-  const data = await r.json();
-  return Array.isArray(data.customers) ? data.customers : [];
-}
-
-// POST /admin/email — send (or dry-run) to a segment
+// POST /admin/email — actually send the emails
 app.post('/admin/email', async (req, res) => {
-  try {
-    if (!isAdmin(req)) return res.status(403).send('Forbidden');
+  const pass = req.query.pass || req.headers['x-admin-pass'];
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ ok:false, message:'Forbidden' });
+  }
 
-    const subject   = String(req.body.subject || '').trim();
-    const html      = String(req.body.html || '');
-    const segment   = String(req.body.segment || '').trim().toLowerCase(); // e.g. "de"
-    const dryRun    = !!req.body.dry;
-    const limit     = Math.max(1, Math.min(10000, Number(req.body.limit || 500)));
-    let   since_id  = Number(req.body.since_id || 0) || 0;
-    const testTo    = String(req.body.test_to || '').trim();
+  try {
+    let { subject, html, locale, limit, dryRun } = req.body || {};
+    subject = String(subject || '').trim();
+    html    = String(html || '');
+    locale  = String(locale || '').trim().toLowerCase();
+    limit   = Math.max(1, Math.min(5000, Number(limit || 500)));
+    dryRun  = !!dryRun;
 
     if (!subject || !html) {
-      return res.status(400).send('Missing subject or html');
+      return res.status(400).json({ ok:false, message:'Missing subject or html' });
     }
 
-    // Optional: send a single test first
-    if (testTo) {
-      const email = normEmail(testTo);
-      if (!email) return res.status(400).send('Invalid test email');
-      await mailer.sendMail({
-        from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-        to: email,
-        subject,
-        html: withUnsubFooter(html, email),
-        headers: { 'List-Unsubscribe': listUnsubHeader(email) }
-      });
-    }
+    // Fetch customers from Shopify in pages
+    let sent = 0, failed = 0, skipped = 0, checked = 0;
+    let pageInfo = null;
 
-    // Pull customers in small chunks until we hit the requested `limit`
-    const toSend = [];
-    while (toSend.length < limit) {
-      const batch = await fetchShopifyCustomers({
-        limit: Math.min(250, limit - toSend.length),
-        since_id
-      });
-      if (!batch.length) break;
-      since_id = batch[batch.length - 1].id;
+    while (checked < limit) {
+      const { customers, nextPageInfo } = await fetchShopifyCustomersPage(pageInfo);
+      if (!customers || !customers.length) break;
+      pageInfo = nextPageInfo;
 
-      // Segment filter by locale short (if provided)
-      for (const c of batch) {
-        const email = normEmail(c.email);
-        if (!email) continue;
+      for (const cust of customers) {
+        if (checked >= limit) break;
+        checked++;
 
-        if (segment) {
-          const loc = (c.locale || '').toLowerCase();
-          if (!(loc === segment || (loc.split('-')[0] === segment))) continue;
+        const email = normEmail(cust.email);
+        if (!email) { skipped++; continue; }
+
+        // segment by locale if provided (match long or short)
+        if (locale) {
+          const cl = (cust.locale || cust.language || '').toLowerCase();
+          const short = cl.split('-')[0];
+          if (cl !== locale && short !== locale) { skipped++; continue; }
         }
-        toSend.push({ id: c.id, email, locale: (c.locale || 'en').toLowerCase() });
-        if (toSend.length >= limit) break;
-      }
-    }
 
-    if (dryRun) {
-      return res.send(`
-        <div style="font:14px Arial,sans-serif">
-          <h3>Dry run — would send to ${toSend.length} customers</h3>
-          <p>Next since_id to continue: <code>${since_id}</code></p>
-          <pre style="white-space:pre-wrap">${toSend.slice(0, 50).map(x => `${x.id}  ${x.email}  (${x.locale})`).join('\n')}${toSend.length>50?'\n…':''}</pre>
-        </div>
-      `);
-    }
+        // honor unsubscribes
+        if (await isUnsubscribed(email)) { skipped++; continue; }
 
-    let sent = 0, skipped = 0, failed = 0;
-    for (const cust of toSend) {
-      // Skip unsubscribed
-      if (await isUnsubscribed(cust.email)) { skipped++; continue; }
+        // assemble message
+        const finalSubject = subject;
+        const finalHtml    = withUnsubFooter(html, email);
 
-      try {
-        await mailer.sendMail({
-          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-          to: cust.email,
-          subject,
-          html: withUnsubFooter(html, cust.email),
-          headers: { 'List-Unsubscribe': listUnsubHeader(cust.email) }
-        });
-        sent++;
-      } catch (e) {
-        console.error('Bulk email error', cust.email, e);
-        failed++;
+        if (dryRun) {
+          // just count, don’t send
+          sent++;
+          continue;
+        }
+
+        try {
+          await mailer.sendMail({
+            from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+            to: email,
+            subject: finalSubject,
+            html: finalHtml,
+            headers: {
+              'List-Unsubscribe': listUnsubHeader(email)
+            }
+          });
+          sent++;
+        } catch (e) {
+          console.error('Send error', email, e && e.message ? e.message : e);
+          failed++;
+        }
       }
 
-      // polite tiny delay to avoid bursts (optional)
-      await new Promise(r => setTimeout(r, 15));
+      if (!nextPageInfo) break; // no more pages
     }
 
-    res.send(`
-      <div style="font:14px Arial,sans-serif">
-        <h3>Bulk email done</h3>
-        <p>Segment: <code>${segment || 'all'}</code></p>
-        <p>Sent: ${sent}, Skipped (unsubscribed): ${skipped}, Failed: ${failed}</p>
-        <p>Next since_id to continue: <code>${since_id}</code></p>
-        <p><a href="/admin/email?pass=${encodeURIComponent(req.body.pass || '')}">Back</a></p>
-      </div>
-    `);
-  } catch (err) {
-    console.error('/admin/email error:', err);
-    res.status(500).send('Server error');
+    return res.json({ ok:true, sent, failed, skipped, checked, dryRun });
+  } catch (e) {
+    console.error('POST /admin/email error', e);
+    return res.status(500).json({ ok:false, message:'Server error' });
   }
 });
 
@@ -1728,6 +1697,27 @@ app.get('/lottery/count/:productId', (req, res) => {
       res.json({ success: true, totalEntries: row?.c || 0 });
     }
   );
+});
+
+// === Unsubscribe endpoint ===
+app.get('/u', (req, res) => {
+  const { e, t } = req.query;
+  const secret = process.env.UNSUB_SECRET || process.env.ADMIN_PASS || 'change-me';
+
+  if (!e || !t) return res.status(400).send('Invalid link');
+
+  const check = crypto.createHmac('sha256', secret)
+    .update(e.toLowerCase())
+    .digest('hex')
+    .slice(0, 32);
+
+  if (check !== t) return res.status(403).send('Invalid token');
+
+  // remove from BIS + entries
+  db.run(`DELETE FROM bis_requests WHERE email = ?`, [e.toLowerCase()]);
+  db.run(`DELETE FROM entries WHERE email = ?`, [e.toLowerCase()]);
+
+  res.send('<h2>You have been unsubscribed.</h2>');
 });
 
 // ---------- Health checks ----------
