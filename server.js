@@ -294,7 +294,240 @@ function buildEmail(locale, title, claimLink) {
   const t = {
     en: { subject: `You won: ${title}!`, hello: `🎉 Congratulations!`, body: `You’ve won the lottery for <strong>${title}</strong>.`, ctaLead: `Click below to claim your prize:`, cta: `Claim your prize`, reply: `Please reply to this email to claim your prize.`, copyHelp: `If the button doesn’t work, copy this link:` },
     de: { subject: `Sie haben gewonnen: ${title}!`, hello: `🎉 Herzlichen Glückwunsch!`, body: `Sie haben die Verlosung für <strong>${title}</strong> gewonnen.`, ctaLead: `Klicken Sie unten, um Ihren Gewinn einzulösen:`, cta: `Gewinn einlösen`, reply: `Bitte antworten Sie auf diese E-Mail, um Ihren Gewinn zu beanspruchen.`, copyHelp: `Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link:` },
-    // ... (other locales omitted for brevity; keep yours as in your version)
+    fr: {
+      subject: `Vous avez gagné : ${title} !`,
+      hello: `🎉 Félicitations !`,
+      body: `Vous avez remporté la loterie pour <strong>${title}</strong>.`,
+      ctaLead: `Cliquez ci-dessous pour récupérer votre lot :`,
+      cta: `Récupérer mon lot`,
+      reply: `Veuillez répondre à cet e-mail pour récupérer votre lot.`,
+      copyHelp: `Si le bouton ne fonctionne pas, copiez ce lien :`
+    },
+    es: {
+      subject: `¡Has ganado: ${title}!`,
+      hello: `🎉 ¡Enhorabuena!`,
+      body: `Has ganado la lotería de <strong>${title}</strong>.`,
+      ctaLead: `Haz clic abajo para reclamar tu premio:`,
+      cta: `Reclamar premio`,
+      reply: `Responde a este correo para reclamar tu premio.`,
+      copyHelp: `Si el botón no funciona, copia este enlace:`
+    },
+    it: {
+      subject: `Hai vinto: ${title}!`,
+      hello: `🎉 Congratulazioni!`,
+      body: `Hai vinto la lotteria per <strong>${title}</strong>.`,
+      ctaLead: `Clicca qui sotto per riscattare il premio:`,
+      cta: `Riscatta il premio`,
+      reply: `Rispondi a questa email per riscattare il premio.`,
+      copyHelp: `Se il pulsante non funziona, copia questo link:`
+    },
+    nl: {
+      subject: `Je hebt gewonnen: ${title}!`,
+      hello: `🎉 Gefeliciteerd!`,
+      body: `Je hebt de loterij voor <strong>${title}</strong> gewonnen.`,
+      ctaLead: `Klik hieronder om je prijs te claimen:`,
+      cta: `Prijs claimen`,
+      reply: `Beantwoord deze e-mail om je prijs te claimen.`,
+      copyHelp: `Werkt de knop niet? Kopieer deze link:`
+    },
+    da: {
+      subject: `Du har vundet: ${title}!`,
+      hello: `🎉 Tillykke!`,
+      body: `Du har vundet lodtrækningen om <strong>${title}</strong>.`,
+      ctaLead: `Klik herunder for at få din præmie:`,
+      cta: `Hent præmien`,
+      reply: `Svar på denne e-mail for at få din præmie.`,
+      copyHelp: `Hvis knappen ikke virker, så kopier dette link:`
+    },
+    sv: {
+      subject: `Du har vunnit: ${title}!`,
+      hello: `🎉 Grattis!`,
+      body: `Du har vunnit lotteriet för <strong>${title}</strong>.`,
+      ctaLead: `Klicka nedan för att hämta ditt pris:`,
+      cta: `Hämta priset`,
+      reply: `Svara på detta mejl för att hämta ditt pris.`,
+      copyHelp: `Om knappen inte fungerar, kopiera denna länk:`
+    },
+    nb: {
+      subject: `Du har vunnet: ${title}!`,
+      hello: `🎉 Gratulerer!`,
+      body: `Du har vunnet lotteriet for <strong>${title}</strong>.`,
+      ctaLead: `Klikk nedenfor for å hente premien:`,
+      cta: `Hent premien`,
+      reply: `Svar på denne e-posten for å hente premien.`,
+      copyHelp: `Hvis knappen ikke fungerer, kopier denne lenken:`
+    },
+    fi: {
+      subject: `Voitit: ${title}!`,
+      hello: `🎉 Onnittelut!`,
+      body: `Voitit arvonnassa tuotteen <strong>${title}</strong>.`,
+      ctaLead: `Napsauta alta lunastaaksesi palkinnon:`,
+      cta: `Lunasta palkinto`,
+      reply: `Vastaa tähän sähköpostiin lunastaaksesi palkinnon.`,
+      copyHelp: `Ellei painike toimi, kopioi tämä linkki:`
+    },
+    pl: {
+      subject: `Wygrałeś/Wygrałaś: ${title}!`,
+      hello: `🎉 Gratulacje!`,
+      body: `Wygrałeś/Wygrałaś losowanie <strong>${title}</strong>.`,
+      ctaLead: `Kliknij poniżej, aby odebrać nagrodę:`,
+      cta: `Odbierz nagrodę`,
+      reply: `Odpowiedz na tę wiadomość, aby odebrać nagrodę.`,
+      copyHelp: `Jeśli przycisk nie działa, skopiuj ten link:`
+    },
+    pt: {
+      subject: `Você ganhou: ${title}!`,
+      hello: `🎉 Parabéns!`,
+      body: `Você ganhou o sorteio de <strong>${title}</strong>.`,
+      ctaLead: `Clique abaixo para resgatar o prêmio:`,
+      cta: `Resgatar prêmio`,
+      reply: `Responda a este e-mail para resgatar seu prêmio.`,
+      copyHelp: `Se o botão não funcionar, copie este link:`
+    },
+    cs: {
+      subject: `Vyhráli jste: ${title}!`,
+      hello: `🎉 Gratulujeme!`,
+      body: `Vyhráli jste v loterii o <strong>${title}</strong>.`,
+      ctaLead: `Klikněte níže pro převzetí výhry:`,
+      cta: `Vyžádat výhru`,
+      reply: `Odpovězte na tento e-mail pro převzetí výhry.`,
+      copyHelp: `Pokud tlačítko nefunguje, zkopírujte tento odkaz:`
+    },
+    sk: {
+      subject: `Vyhrali ste: ${title}!`,
+      hello: `🎉 Gratulujeme!`,
+      body: `Vyhrali ste v lotérii o <strong>${title}</strong>.`,
+      ctaLead: `Kliknite nižšie a vyzdvihnite si výhru:`,
+      cta: `Vyzdvihnúť výhru`,
+      reply: `Odpovedzte na tento e-mail, aby ste získali výhru.`,
+      copyHelp: `Ak tlačidlo nefunguje, skopírujte tento odkaz:`
+    },
+    sl: {
+      subject: `Zmagali ste: ${title}!`,
+      hello: `🎉 Čestitke!`,
+      body: `Zmagali ste v žrebanju za <strong>${title}</strong>.`,
+      ctaLead: `Kliknite spodaj za prevzem nagrade:`,
+      cta: `Prevzemi nagrado`,
+      reply: `Odgovorite na to e-pošto za prevzem nagrade.`,
+      copyHelp: `Če gumb ne deluje, kopirajte to povezavo:`
+    },
+    ro: {
+      subject: `Ai câștigat: ${title}!`,
+      hello: `🎉 Felicitări!`,
+      body: `Ai câștigat loteria pentru <strong>${title}</strong>.`,
+      ctaLead: `Apasă mai jos pentru a-ți revendica premiul:`,
+      cta: `Revendică premiul`,
+      reply: `Răspunde la acest e-mail pentru a-ți revendica premiul.`,
+      copyHelp: `Dacă butonul nu funcționează, copiază acest link:`
+    },
+    hu: {
+      subject: `Nyertél: ${title}!`,
+      hello: `🎉 Gratulálunk!`,
+      body: `Megnyerted a <strong>${title}</strong> sorsolását.`,
+      ctaLead: `Kattints lentebb a nyereményed átvételéhez:`,
+      cta: `Nyeremény átvétele`,
+      reply: `Válaszolj erre az e-mailre a nyereményed átvételéhez.`,
+      copyHelp: `Ha a gomb nem működik, másold ezt a hivatkozást:`
+    },
+    bg: {
+      subject: `Спечелихте: ${title}!`,
+      hello: `🎉 Поздравления!`,
+      body: `Вие спечелихте томболата за <strong>${title}</strong>.`,
+      ctaLead: `Кликнете по-долу, за да получите наградата:`,
+      cta: `Вземете наградата`,
+      reply: `Отговорете на този имейл, за да получите наградата.`,
+      copyHelp: `Ако бутонът не работи, копирайте този линк:`
+    },
+    el: {
+      subject: `Κερδίσατε: ${title}!`,
+      hello: `🎉 Συγχαρητήρια!`,
+      body: `Κερδίσατε την κλήρωση για <strong>${title}</strong>.`,
+      ctaLead: `Κάντε κλικ παρακάτω για να παραλάβετε το έπαθλο:`,
+      cta: `Παραλαβή επάθλου`,
+      reply: `Απαντήστε σε αυτό το email για να παραλάβετε το έπαθλο.`,
+      copyHelp: `Αν δεν λειτουργεί το κουμπί, αντιγράψτε αυτόν τον σύνδεσμο:`
+    },
+    tr: {
+      subject: `Kazandınız: ${title}!`,
+      hello: `🎉 Tebrikler!`,
+      body: `<strong>${title}</strong> çekilişini kazandınız.`,
+      ctaLead: `Ödülünüzü almak için aşağıya tıklayın:`,
+      cta: `Ödülü al`,
+      reply: `Ödülünüzü almak için bu e-postayı yanıtlayın.`,
+      copyHelp: `Düğme çalışmazsa bu bağlantıyı kopyalayın:`
+    },
+    ru: {
+      subject: `Вы выиграли: ${title}!`,
+      hello: `🎉 Поздравляем!`,
+      body: `Вы выиграли розыгрыш <strong>${title}</strong>.`,
+      ctaLead: `Нажмите ниже, чтобы получить приз:`,
+      cta: `Получить приз`,
+      reply: `Ответьте на это письмо, чтобы получить приз.`,
+      copyHelp: `Если кнопка не работает, скопируйте эту ссылку:`
+    },
+    ja: {
+      subject: `当選しました：${title}！`,
+      hello: `🎉 おめでとうございます！`,
+      body: `<strong>${title}</strong> の抽選に当選しました。`,
+      ctaLead: `賞品の受け取りは以下をクリック：`,
+      cta: `賞品を受け取る`,
+      reply: `このメールに返信して賞品を受け取ってください。`,
+      copyHelp: `ボタンが動作しない場合は、このリンクをコピーしてください：`
+    },
+    ko: {
+      subject: `당첨을 축하드립니다: ${title}!`,
+      hello: `🎉 축하합니다!`,
+      body: `<strong>${title}</strong> 추첨에 당첨되셨습니다.`,
+      ctaLead: `아래를 클릭해 상품을 수령하세요:`,
+      cta: `상품 수령하기`,
+      reply: `이 이메일에 회신하여 상품을 수령하세요.`,
+      copyHelp: `버튼이 작동하지 않으면 이 링크를 복사하세요:`
+    },
+    'zh-cn': {
+      subject: `您已中奖：${title}！`,
+      hello: `🎉 恭喜！`,
+      body: `您已中签 <strong>${title}</strong> 抽奖活动。`,
+      ctaLead: `点击下方领取奖品：`,
+      cta: `领取奖品`,
+      reply: `请回复此邮件以领取奖品。`,
+      copyHelp: `如果按钮无效，请复制此链接：`
+    },
+    'zh-tw': {
+      subject: `您中獎了：${title}！`,
+      hello: `🎉 恭喜！`,
+      body: `您已中籤 <strong>${title}</strong> 抽獎活動。`,
+      ctaLead: `點擊下方領取獎品：`,
+      cta: `領取獎品`,
+      reply: `請回覆此郵件以領取獎品。`,
+      copyHelp: `如果按鈕無法使用，請複製此連結：`
+    },
+    vi: {
+      subject: `Bạn đã trúng thưởng: ${title}!`,
+      hello: `🎉 Chúc mừng!`,
+      body: `Bạn đã trúng xổ số cho <strong>${title}</strong>.`,
+      ctaLead: `Nhấn bên dưới để nhận phần thưởng:`,
+      cta: `Nhận phần thưởng`,
+      reply: `Hãy trả lời email này để nhận phần thưởng.`,
+      copyHelp: `Nếu nút không hoạt động, hãy sao chép liên kết này:`
+    },
+    lt: {
+      subject: `Jūs laimėjote: ${title}!`,
+      hello: `🎉 Sveikiname!`,
+      body: `Laimėjote loteriją dėl <strong>${title}</strong>.`,
+      ctaLead: `Spustelėkite žemiau, kad atsiimtumėte prizą:`,
+      cta: `Atsiimti prizą`,
+      reply: `Atsakykite į šį el. laišką, kad atsiimtumėte prizą.`,
+      copyHelp: `Jei mygtukas neveikia, nukopijuokite šią nuorodą:`
+    },
+    hr: {
+      subject: `Pobijedili ste: ${title}!`,
+      hello: `🎉 Čestitamo!`,
+      body: `Pobijedili ste na nagradnoj igri za <strong>${title}</strong>.`,
+      ctaLead: `Kliknite dolje za preuzimanje nagrade:`,
+      cta: `Preuzmi nagradu`,
+      reply: `Odgovorite na ovaj e-mail kako biste preuzeli nagradu.`,
+      copyHelp: `Ako gumb ne radi, kopirajte ovu poveznicu:`
+    }
   };
   const pack = t[l] || t[s] || t.en;
   const html = `
@@ -316,8 +549,105 @@ function buildEntryConfirmEmail(locale, title) {
   const t = {
     en: { subject: `You're in: ${title}`, body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Thanks—your entry for <strong>${title}</strong> is confirmed.</p><p>We’ll draw at the deadline and email the winner.</p></div>` },
     de: { subject: `Sie sind dabei: ${title}`, body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Danke – Ihre Teilnahme für <strong>${title}</strong> wurde bestätigt.</p><p>Wir losen zum Stichtag aus und benachrichtigen den Gewinner per E-Mail.</p></div>` },
-    // ... (other locales as in your version)
-  };
+    fr: {
+      subject: `Participation confirmée : ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Merci — votre participation pour <strong>${title}</strong> est confirmée.</p>
+               <p>Nous tirerons au sort à l’échéance et préviendrons le gagnant par e-mail.</p>
+             </div>`
+    },
+    nl: {
+      subject: `Je doet mee: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Bedankt — je inschrijving voor <strong>${title}</strong> is bevestigd.</p>
+               <p>We loten op de einddatum en mailen de winnaar.</p>
+             </div>`
+    },
+    es: {
+      subject: `Estás dentro: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Gracias — tu participación en <strong>${title}</strong> está confirmada.</p>
+               <p>Haremos el sorteo en la fecha límite y enviaremos un correo al ganador.</p>
+             </div>`
+    },
+    it: {
+      subject: `Sei dentro: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Grazie — la tua partecipazione a <strong>${title}</strong> è confermata.</p>
+               <p>Eseguiremo l’estrazione alla scadenza e invieremo un’e-mail al vincitore.</p>
+             </div>`
+    },
+    ja: {
+      subject: `参加が確定しました：${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>ご応募ありがとうございます。<strong>${title}</strong> への参加が確認されました。</p>
+               <p>締め切り後に抽選を行い、当選者にメールでご連絡します。</p>
+             </div>`
+    },
+    ko: {
+      subject: `참여가 완료되었습니다: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>감사합니다. <strong>${title}</strong> 응모가 확인되었습니다.</p>
+               <p>마감 후 추첨하여 당첨자에게 이메일로 안내드립니다.</p>
+             </div>`
+    },
+    pl: {
+      subject: `Zgłoszenie przyjęte: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Dziękujemy — Twoje zgłoszenie do <strong>${title}</strong> zostało potwierdzone.</p>
+               <p>Losowanie odbędzie się w terminie końcowym, a zwycięzca otrzyma e-mail.</p>
+             </div>`
+    },
+    ro: {
+      subject: `Ești înscris: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Mulțumim — înscrierea ta pentru <strong>${title}</strong> a fost confirmată.</p>
+               <p>Vom face tragerea la sorți la termen și îl vom anunța pe câștigător prin e-mail.</p>
+             </div>`
+    },
+    bg: {
+      subject: `Участието ви е потвърдено: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Благодарим — участието ви за <strong>${title}</strong> е потвърдено.</p>
+               <p>Жребият ще бъде изтеглен на крайния срок и победителят ще получи имейл.</p>
+             </div>`
+    },
+    ar: {
+      subject: `تم تأكيد مشاركتك: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333;direction:rtl;text-align:right">
+               <p>شكرًا لك — تم تأكيد مشاركتك في <strong>${title}</strong>.</p>
+               <p>سنُجري السحب عند موعد الإغلاق ونرسل رسالة إلى الفائز عبر البريد الإلكتروني.</p>
+             </div>`
+    },
+    he: {
+      subject: `ההרשמה שלך אושרה: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333;direction:rtl;text-align:right">
+               <p>תודה — ההשתתפות שלך ב־<strong>${title}</strong> אושרה.</p>
+               <p>נבצע את ההגרלה במועד הסיום ונעדכן את הזוכה במייל.</p>
+             </div>`
+    },
+    sv: {
+      subject: `Du är med: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Tack — din anmälan till <strong>${title}</strong> är bekräftad.</p>
+               <p>Vi drar en vinnare vid sista datumet och mejlar vinnaren.</p>
+             </div>`
+    },
+    nb: {
+      subject: `Du er med: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Takk — påmeldingen din til <strong>${title}</strong> er bekreftet.</p>
+               <p>Vi trekker en vinner ved fristen og sender e-post til vinneren.</p>
+             </div>`
+    },
+    fi: {
+      subject: `Olet mukana: ${title}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
+               <p>Kiitos — osallistumisesi kohteeseen <strong>${title}</strong> on vahvistettu.</p>
+               <p>Arvonta suoritetaan määräaikana ja voittajalle lähetetään sähköposti.</p>
+             </div>`
+    }
+};
   const pack = t[l] || t[s] || t.en;
   return { subject: pack.subject, html: pack.body };
 }
@@ -358,7 +688,31 @@ const BIS_I18N = {
         <p>Good news — <strong>${title}</strong> is back in stock.</p>
         <p><a href="${url}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Shop now</a></p>
       </div>`,
-    // ... (other locales as in your version)
+    de: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gute Nachrichten — <strong>${t}</strong> ist wieder vorrätig.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Jetzt kaufen</a></p></div>`,
+    fr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Bonne nouvelle — <strong>${t}</strong> est de retour en stock.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Je commande</a></p></div>`,
+    es: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buenas noticias: <strong>${t}</strong> está de vuelta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar ahora</a></p></div>`,
+    it: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buone notizie — <strong>${t}</strong> è di nuovo disponibile.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Acquista ora</a></p></div>`,
+    nl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goed nieuws — <strong>${t}</strong> is weer op voorraad.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Nu shoppen</a></p></div>`,
+    da: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gode nyheder — <strong>${t}</strong> er tilbage på lager.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Køb nu</a></p></div>`,
+    sv: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goda nyheter — <strong>${t}</strong> är tillbaka i lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Handla nu</a></p></div>`,
+    nb: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Godt nytt — <strong>${t}</strong> er tilbake på lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kjøp nå</a></p></div>`,
+    fi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Hyviä uutisia — <strong>${t}</strong> on taas varastossa.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Osta nyt</a></p></div>`,
+    cs: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvělé zprávy — <strong>${t}</strong> je opět skladem.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Koupit nyní</a></p></div>`,
+    sk: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvelá správa — <strong>${t}</strong> je opäť na sklade.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kúpiť teraz</a></p></div>`,
+    sl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobre novice — <strong>${t}</strong> je spet na zalogi.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Nakupuj zdaj</a></p></div>`,
+    hu: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Jó hír — <strong>${t}</strong> újra készleten van.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Vásárlás</a></p></div>`,
+    ro: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Veste bună — <strong>${t}</strong> este din nou în stoc.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Cumpără acum</a></p></div>`,
+    pl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobra wiadomość — <strong>${t}</strong> znów jest dostępny.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kup teraz</a></p></div>`,
+    pt: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Boa notícia — <strong>${t}</strong> está de volta ao estoque.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar agora</a></p></div>`,
+    bg: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Добра новина — <strong>${t}</strong> отново е наличен.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купи сега</a></p></div>`,
+    el: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Καλά νέα — το <strong>${t}</strong> είναι ξανά διαθέσιμο.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Αγορά τώρα</a></p></div>`,
+    ru: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Отличная новость — <strong>${t}</strong> снова в наличии.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купить</a></p></div>`,
+    tr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Harika haber — <strong>${t}</strong> yeniden stokta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Hemen al</a></p></div>`,
+    vi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Tin vui — <strong>${t}</strong> đã có hàng trở lại.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Mua ngay</a></p></div>`,
+    ja: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>朗報です。<strong>${t}</strong> が再入荷しました。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">今すぐ購入</a></p></div>`,
+    ko: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>좋은 소식 — <strong>${t}</strong> 가 재입고되었습니다.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">지금 구매</a></p></div>`,
+    'zh-cn': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 现已到货。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即购买</a></p></div>`,
+    'zh-tw': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 現已到貨。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即購買</a></p></div>`
   }
 };
 function pickLoc(str, fallback = 'en') {
