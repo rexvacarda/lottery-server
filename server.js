@@ -22,6 +22,237 @@ const mailer = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
+// === ADMIN BROADCAST FROM SHOPIFY CUSTOMERS (HTML email, by language) ===
+// Pulls subscribers from Shopify Customers (email marketing consent = subscribed)
+// and optionally filters by short locale (de, fr, nl, ...).
+
+function ensureAdmin(req, res) {
+  const pass = req.query.pass || req.headers['x-admin-pass'];
+  if (pass !== process.env.ADMIN_PASS) {
+    res.status(403).send('Forbidden: wrong password');
+    return false;
+  }
+  return true;
+}
+
+async function shopifyGraphQL(query, variables = {}) {
+  const shop = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ADMIN_API_KEY;
+  if (!shop || !token) throw new Error('Missing SHOPIFY_STORE or SHOPIFY_ADMIN_API_KEY');
+
+  const resp = await fetch(`https://${shop}/admin/api/2025-01/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Shopify GQL ${resp.status}: ${text}`);
+  }
+  const data = await resp.json();
+  if (data.errors) throw new Error(`Shopify GQL errors: ${JSON.stringify(data.errors)}`);
+  return data.data;
+}
+
+// Pull ALL customers with marketing consent = subscribed
+// Returns [{email, short_locale}]
+async function fetchAllSubscribedCustomersFromShopify() {
+  const out = [];
+  let cursor = null;
+  const q = `
+    query Customers($cursor: String) {
+      customers(
+        first: 250,
+        after: $cursor,
+        query: "email_marketing_consent:subscribed"
+      ) {
+        edges {
+          cursor
+          node {
+            email
+            locale
+            emailMarketingConsent { state }
+          }
+        }
+        pageInfo { hasNextPage }
+      }
+    }
+  `;
+  while (true) {
+    const data = await shopifyGraphQL(q, { cursor });
+    const edges = data?.customers?.edges || [];
+    for (const e of edges) {
+      const n = e.node;
+      if (!n?.email) continue;
+      const email = String(n.email).trim().toLowerCase();
+      const loc = (n.locale || '').toLowerCase();
+      const short = loc.includes('-') ? loc.split('-')[0] : loc;
+      out.push({ email, short_locale: short || '' });
+    }
+    if (!data?.customers?.pageInfo?.hasNextPage) break;
+    cursor = edges[edges.length - 1]?.cursor || null;
+    if (!cursor) break;
+  }
+  // Dedupe by email
+  const seen = new Set();
+  const deduped = [];
+  for (const r of out) {
+    if (seen.has(r.email)) continue;
+    seen.add(r.email);
+    deduped.push(r);
+  }
+  return deduped;
+}
+
+// Small locale histogram to show counts on the form
+async function buildShopifyLocaleCounts() {
+  const rows = await fetchAllSubscribedCustomersFromShopify();
+  const map = {};
+  for (const r of rows) {
+    const k = r.short_locale || 'en';
+    map[k] = (map[k] || 0) + 1;
+  }
+  return { rows, counts: map };
+}
+
+// Broadcast form (Shopify source)
+app.get('/admin/broadcast-shopify', async (req, res) => {
+  if (!ensureAdmin(req, res)) return;
+  try {
+    const { rows, counts } = await buildShopifyLocaleCounts();
+    const total = rows.length;
+    const opts = Object.keys(counts).sort().map(k => `<option value="${k}">${k} (${counts[k]})</option>`).join('');
+    res.send(`
+      <meta charset="utf-8">
+      <style>
+        body { font-family:system-ui, Arial, sans-serif; padding:20px; max-width:900px; margin:0 auto; color:#222;}
+        .box { border:1px solid #ddd; border-radius:10px; padding:16px; margin-top:16px;}
+        label { display:block; margin-top:12px; font-weight:600; }
+        input[type="text"]{ width:100%; padding:10px; border:1px solid #ccc; border-radius:8px;}
+        textarea{ width:100%; min-height:260px; padding:10px; border:1px solid #ccc; border-radius:8px; font-family:Consolas,monospace;}
+        select,button{ padding:10px 12px; border-radius:8px; border:1px solid #999;}
+        .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+        .muted{ color:#666; font-size:13px;}
+        .right{ text-align:right;}
+        .btn-primary{ background:#111; color:#fff; border-color:#111;}
+      </style>
+      <h1>Broadcast from Shopify Customers</h1>
+      <p class="muted">Total subscribed customers: <strong>${total}</strong></p>
+      <div class="box">
+        <form method="POST" action="/admin/broadcast-shopify/send?pass=${encodeURIComponent(req.query.pass || '')}">
+          <label>Subject</label>
+          <input type="text" name="subject" placeholder="Your email subject" required>
+
+          <div class="row">
+            <div>
+              <label>Segment by language</label>
+              <select name="segment" required>
+                <option value="all">All locales</option>
+                ${opts}
+              </select>
+            </div>
+            <div>
+              <label>Test only</label>
+              <select name="test_only">
+                <option value="yes">Yes (no sends)</option>
+                <option value="no">No (send)</option>
+              </select>
+            </div>
+            <div>
+              <label>Max send (cap)</label>
+              <input type="text" name="max_send" value="2000" style="width:110px">
+            </div>
+          </div>
+
+          <label>HTML content</label>
+          <textarea name="html" placeholder="<div>...</div>" required></textarea>
+
+          <div class="row right">
+            <button type="submit" class="btn-primary">Go</button>
+          </div>
+        </form>
+      </div>
+    `);
+  } catch (e) {
+    console.error('broadcast-shopify form error', e);
+    res.status(500).send('Server error');
+  }
+});
+
+// Send from Shopify audience
+app.post('/admin/broadcast-shopify/send', async (req, res) => {
+  if (!ensureAdmin(req, res)) return;
+
+  try {
+    let { subject, html, segment, test_only, max_send } = req.body || {};
+    subject  = String(subject || '').trim();
+    html     = String(html || '').trim();
+    segment  = String(segment || 'all').toLowerCase();
+    test_only = String(test_only || 'yes') === 'yes';
+    max_send = Number(max_send || 2000);
+
+    if (!subject || !html) return res.status(400).send('Missing subject or HTML.');
+
+    const all = await fetchAllSubscribedCustomersFromShopify();
+    const filtered = (segment === 'all') ? all : all.filter(r => (r.short_locale || 'en') === segment);
+    const toSend = filtered.slice(0, Math.max(0, max_send));
+
+    if (test_only) {
+      return res.send(`
+        <meta charset="utf-8">
+        <div style="font-family:system-ui,Arial,sans-serif;padding:20px;max-width:900px;margin:0 auto">
+          <h2>Test Mode (no emails sent)</h2>
+          <p><strong>Segment:</strong> ${segment}</p>
+          <p><strong>Total candidates:</strong> ${filtered.length}</p>
+          <p><strong>Capped to:</strong> ${toSend.length}</p>
+          <p><strong>Sample first 20:</strong></p>
+          <pre>${toSend.slice(0,20).map(x=>x.email).join('\\n')}</pre>
+          <h3>Subject</h3>
+          <pre>${subject.replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+          <h3>HTML Preview</h3>
+          <div style="border:1px solid #ddd;border-radius:8px;padding:12px">${html}</div>
+        </div>
+      `);
+    }
+
+    let sent = 0, failed = 0;
+    const batchSize = 50;
+
+    for (let i = 0; i < toSend.length; i += batchSize) {
+      const batch = toSend.slice(i, i + batchSize);
+      const jobs = batch.map(r =>
+        mailer.sendMail({
+          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+          to: r.email,
+          subject,
+          html
+        }).then(() => { sent++; }).catch(err => { failed++; console.error('shopify broadcast error', r.email, err); })
+      );
+      await Promise.allSettled(jobs);
+      await new Promise(r => setTimeout(r, 600)); // small pause
+    }
+
+    res.send(`
+      <meta charset="utf-8">
+      <div style="font-family:system-ui,Arial,sans-serif;padding:20px;max-width:900px;margin:0 auto">
+        <h2>Broadcast complete</h2>
+        <p><strong>Segment:</strong> ${segment}</p>
+        <p><strong>Attempted:</strong> ${toSend.length}</p>
+        <p><strong>Sent:</strong> ${sent}</p>
+        <p><strong>Failed:</strong> ${failed}</p>
+        <p><a href="/admin/broadcast-shopify?pass=${encodeURIComponent(req.query.pass || '')}">← Back</a></p>
+      </div>
+    `);
+  } catch (e) {
+    console.error('broadcast-shopify send error', e);
+    res.status(500).send('Server error');
+  }
+});
+
 // ---------- SQLite DB (file) ----------
 const dbPath = process.env.DB_PATH || 'lottery.db';
 const db = new sqlite3.Database(dbPath);
