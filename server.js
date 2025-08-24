@@ -1226,7 +1226,7 @@ app.post('/admin/email', async (req, res) => {
 
     const subject = String(req.body.subject || '').trim();
     const html = String(req.body.html || '');
-    const segment = String(req.body.segment || '').trim().toLowerCase();
+    let segment = String(req.body.segment || '').trim().toLowerCase().replace('_','-');
     const dryRun = !!req.body.dry;
     const limit = Math.max(1, Math.min(10000, Number(req.body.limit || 500)));
     let since_id = Number(req.body.since_id || 0) || 0;
@@ -1281,8 +1281,15 @@ app.post('/admin/email', async (req, res) => {
   // 3) Final fallback
   if (!lang) lang = 'en';
 
-  // Segment filter from the form (if provided)
-  if (segment && lang !== segment) continue;
+  // Keep both lang + full locale
+let locale = (c.locale || '').toLowerCase().replace('_','-'); // e.g. "en-gb"
+let lang   = locale.split('-')[0];                            // e.g. "en"
+
+// Default to lang if no full locale
+if (!locale) locale = lang;
+
+// Segment filter: match exact locale OR base language
+if (segment && segment !== locale && segment !== lang) continue;
 
   // Queue with the resolved language
   toSend.push({ id: c.id, email, locale: lang });
