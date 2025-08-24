@@ -1250,53 +1250,56 @@ app.post('/admin/email', async (req, res) => {
       const batch = await fetchShopifyCustomers({ limit: Math.min(250, limit - toSend.length), since_id });
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
-   for (const c of batch) {
+for (const c of batch) {
   const email = normEmail(c.email);
   if (!email) continue;
 
-  // Normalize full locale from Shopify, e.g. "en-GB" -> "en-gb"
-  const localeFull = String(c.locale || '').toLowerCase().replace('_', '-');
-  let baseLang = localeFull ? localeFull.split('-')[0] : '';
+  // Normalize customer.locale
+  const rawLocale = String(c.locale || '').trim();
+  const locale = rawLocale.toLowerCase().replace('_', '-'); // e.g. "en-gb"
+  const lang = (locale.split('-')[0] || '').trim();         // e.g. "en"
 
-  // Fallback: derive baseLang from tags if locale missing
-  if (!baseLang) {
-    const tags = String(c.tags || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
+  // Normalize tags (Shopify REST gives comma-separated string)
+  const tags = String(c.tags || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(t => t.toLowerCase().replace('_', '-'));
 
-    // Prefer explicit "lang-xx" / "lang_xx"
-    const tagged = tags.find(t => /^lang[-_][a-z]{2}$/i.test(t));
-    if (tagged) baseLang = tagged.slice(5, 7).toLowerCase();
-
-    // Then try a full locale tag like "en-GB"
-    if (!baseLang) {
-      const locTag = tags.find(t => /^[a-z]{2}-[a-z]{2}$/i.test(t));
-      if (locTag) baseLang = locTag.slice(0, 2).toLowerCase();
-    }
-
-    // Finally, a bare two-letter tag like "en"
-    if (!baseLang) {
-      const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
-      if (bare) baseLang = bare.toLowerCase();
-    }
+  // Pull language from tags: prefer "lang-en"/"lang_en" (now normalized to lang-en), else bare "en"
+  let langFromTags = '';
+  const taggedLang = tags.find(t => /^lang-[a-z]{2}$/i.test(t));
+  if (taggedLang) langFromTags = taggedLang.replace(/^lang-/, '');
+  if (!langFromTags) {
+    const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
+    if (bare) langFromTags = bare;
   }
 
-  if (!baseLang) baseLang = 'en';
+  // Also accept full-locale style tags like "en-gb", "pt-br"
+  const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z]{2}$/i.test(t));
+  const baseFromFullTags = fullLocalesFromTags.map(t => t.slice(0, 2)); // ["en", "pt", ...]
 
-  // Segment filter (your 'segment' is already lowercased and "_" -> "-" normalized above)
-  // Match exact locale (e.g. "en-gb") OR base language ("en")
-  if (segment && segment !== localeFull && segment !== baseLang) continue;
+  // Build a set of all candidates that should satisfy the segment
+  const candidates = new Set(
+    [lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags].filter(Boolean)
+  );
 
-  // Push; store something useful for the preview
-  toSend.push({
-    id: c.id,
-    email,
-    locale: localeFull || baseLang
-  });
+  // Apply segment filter:
+  // - segment "en" matches any of: "en", "en-gb", "en-us", tags "en"/"lang-en"/"en-gb"
+  // - segment "en-gb" matches only "en-gb" (or tag "en-gb")
+  if (segment && !candidates.has(segment)) continue;
 
+  // Choose an effective locale to record/preview
+  const effective =
+    locale ||
+    (fullLocalesFromTags[0] || '') ||
+    lang ||
+    (langFromTags || '') ||
+    'en';
+
+  toSend.push({ id: c.id, email, locale: effective });
   if (toSend.length >= limit) break;
-}
+}   
     }
 
     if (dryRun) {
