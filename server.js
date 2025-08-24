@@ -1152,7 +1152,6 @@ app.get('/admin/lotteries', (req, res) => {
     LEFT JOIN lastw ON lastw.productId = p.productId
     LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
     GROUP BY p.productId
-    HAVING entries > 0
     ORDER BY CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END, p.endAt
   `;
   db.all(sql, [], (err, rows) => {
