@@ -1254,20 +1254,37 @@ app.post('/admin/email', async (req, res) => {
   const email = normEmail(c.email);
   if (!email) continue;
 
-  // Decide effective language
-  let lang = (c.locale || '').split('-')[0].toLowerCase();
+  // 1) Start from Shopify's customer.locale (e.g. "en-GB" -> "en")
+  let lang = String(c.locale || '')
+    .toLowerCase()
+    .split('-')[0]; // "en", "es", ""
 
-  // 👇 New: fall back to a two-letter tag if locale is missing
-  if (!lang && Array.isArray(c.tags)) {
-    const match = c.tags.find(t => /^[a-z]{2}$/i.test(t));
-    if (match) lang = match.toLowerCase();
+  // 2) Fallback: derive from tags if locale missing
+  //    Shopify REST returns tags as a comma-separated string.
+  if (!lang) {
+    const tags = String(c.tags || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    // prefer explicit "lang_xx" or "lang-xx"
+    const tagged = tags.find(t => /^lang[-_][a-z]{2}$/i.test(t));
+    if (tagged) {
+      lang = tagged.slice(5).toLowerCase(); // drop "lang_" or "lang-"
+    } else {
+      // otherwise accept first bare two-letter tag like "jp", "es"
+      const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
+      if (bare) lang = bare.toLowerCase();
+    }
   }
 
-  if (!lang) lang = 'en'; // final fallback
+  // 3) Final fallback
+  if (!lang) lang = 'en';
 
-  // Apply segment filter
+  // Segment filter from the form (if provided)
   if (segment && lang !== segment) continue;
 
+  // Queue with the resolved language
   toSend.push({ id: c.id, email, locale: lang });
   if (toSend.length >= limit) break;
 }
