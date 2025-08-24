@@ -1251,15 +1251,26 @@ app.post('/admin/email', async (req, res) => {
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
       for (const c of batch) {
-        const email = normEmail(c.email);
-        if (!email) continue;
-        if (segment) {
-          const loc = (c.locale || '').toLowerCase();
-          if (!(loc === segment || (loc.split('-')[0] === segment))) continue;
-        }
-        toSend.push({ id: c.id, email, locale: (c.locale || 'en').toLowerCase() });
-        if (toSend.length >= limit) break;
-      }
+  const email = normEmail(c.email);
+  if (!email) continue;
+
+  // Decide effective language
+  let lang = (c.locale || '').split('-')[0].toLowerCase();
+
+  // 👇 New: fall back to a two-letter tag if locale is missing
+  if (!lang && Array.isArray(c.tags)) {
+    const match = c.tags.find(t => /^[a-z]{2}$/i.test(t));
+    if (match) lang = match.toLowerCase();
+  }
+
+  if (!lang) lang = 'en'; // final fallback
+
+  // Apply segment filter
+  if (segment && lang !== segment) continue;
+
+  toSend.push({ id: c.id, email, locale: lang });
+  if (toSend.length >= limit) break;
+}
     }
 
     if (dryRun) {
