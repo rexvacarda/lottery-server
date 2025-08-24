@@ -1250,49 +1250,51 @@ app.post('/admin/email', async (req, res) => {
       const batch = await fetchShopifyCustomers({ limit: Math.min(250, limit - toSend.length), since_id });
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
-      for (const c of batch) {
+   for (const c of batch) {
   const email = normEmail(c.email);
   if (!email) continue;
 
-  // 1) Start from Shopify's customer.locale (e.g. "en-GB" -> "en")
-  let lang = String(c.locale || '')
-    .toLowerCase()
-    .split('-')[0]; // "en", "es", ""
+  // Normalize full locale from Shopify, e.g. "en-GB" -> "en-gb"
+  const localeFull = String(c.locale || '').toLowerCase().replace('_', '-');
+  let baseLang = localeFull ? localeFull.split('-')[0] : '';
 
-  // 2) Fallback: derive from tags if locale missing
-  //    Shopify REST returns tags as a comma-separated string.
-  if (!lang) {
+  // Fallback: derive baseLang from tags if locale missing
+  if (!baseLang) {
     const tags = String(c.tags || '')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
 
-    // prefer explicit "lang_xx" or "lang-xx"
+    // Prefer explicit "lang-xx" / "lang_xx"
     const tagged = tags.find(t => /^lang[-_][a-z]{2}$/i.test(t));
-    if (tagged) {
-      lang = tagged.slice(5).toLowerCase(); // drop "lang_" or "lang-"
-    } else {
-      // otherwise accept first bare two-letter tag like "jp", "es"
+    if (tagged) baseLang = tagged.slice(5, 7).toLowerCase();
+
+    // Then try a full locale tag like "en-GB"
+    if (!baseLang) {
+      const locTag = tags.find(t => /^[a-z]{2}-[a-z]{2}$/i.test(t));
+      if (locTag) baseLang = locTag.slice(0, 2).toLowerCase();
+    }
+
+    // Finally, a bare two-letter tag like "en"
+    if (!baseLang) {
       const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
-      if (bare) lang = bare.toLowerCase();
+      if (bare) baseLang = bare.toLowerCase();
     }
   }
 
-  // 3) Final fallback
-  if (!lang) lang = 'en';
+  if (!baseLang) baseLang = 'en';
 
-  // Keep both lang + full locale
-let locale = (c.locale || '').toLowerCase().replace('_','-'); // e.g. "en-gb"
-let lang   = locale.split('-')[0];                            // e.g. "en"
+  // Segment filter (your 'segment' is already lowercased and "_" -> "-" normalized above)
+  // Match exact locale (e.g. "en-gb") OR base language ("en")
+  if (segment && segment !== localeFull && segment !== baseLang) continue;
 
-// Default to lang if no full locale
-if (!locale) locale = lang;
+  // Push; store something useful for the preview
+  toSend.push({
+    id: c.id,
+    email,
+    locale: localeFull || baseLang
+  });
 
-// Segment filter: match exact locale OR base language
-if (segment && segment !== locale && segment !== lang) continue;
-
-  // Queue with the resolved language
-  toSend.push({ id: c.id, email, locale: lang });
   if (toSend.length >= limit) break;
 }
     }
