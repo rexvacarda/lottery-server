@@ -1148,7 +1148,7 @@ app.get('/admin/lotteries', (req, res) => {
 
   // IMPORTANT: if your endAt was saved in LOCAL time (no timezone),
   // set NOW_SQL to "datetime('now','localtime')" instead of "datetime('now')".
-  const NOW_SQL = `datetime('now')`;
+  const NOW_SQL = `datetime('now','localtime')`;
 
   const sql = `
     WITH
@@ -1178,20 +1178,24 @@ app.get('/admin/lotteries', (req, res) => {
     LEFT JOIN lastw ON lastw.productId = p.productId
     LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
     ORDER BY
-      CASE
-        WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 0  -- active first
-        ELSE 1
-      END,
-      -- Within each group, show latest first when finished; nearest deadline first when active
-      CASE
-        WHEN p.endAt IS NULL OR p.endAt = '' THEN 1
-        WHEN datetime(p.endAt) > ${NOW_SQL} THEN 0
-        ELSE 1
-      END,
-      CASE
-        WHEN datetime(p.endAt) > ${NOW_SQL} THEN datetime(p.endAt) ASC
-        ELSE datetime(p.endAt) DESC
-      END
+  -- 1) active first (endAt is NULL/empty or in the future), then finished
+  CASE
+    WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 0
+    ELSE 1
+  END ASC,
+
+  -- 2) within "active": earlier deadlines first; NULL/empty last
+  CASE
+    WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0
+  END ASC,
+  CASE
+    WHEN datetime(p.endAt) > ${NOW_SQL} THEN datetime(p.endAt)
+  END ASC,
+
+  -- 3) within "finished": later deadlines first
+  CASE
+    WHEN p.endAt IS NOT NULL AND p.endAt <> '' AND datetime(p.endAt) <= ${NOW_SQL} THEN datetime(p.endAt)
+  END DESC
   `;
 
   db.all(sql, [], (err, rows) => {
