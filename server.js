@@ -1247,22 +1247,61 @@ app.get('/admin/email', (req, res) => {
   `);
 });
 
-async function fetchShopifyCustomers({ limit = 250, since_id = 0 } = {}) {
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Generic fetch with 429-aware retries and small global pacing
+async function shopifyFetchWithRetry(url, opts = {}, { maxRetries = 6 } = {}) {
   const f = await ensureFetch();
-  const shop = process.env.SHOPIFY_STORE;
+  let attempt = 0;
+
+  while (true) {
+    // pace to ~1.7 req/sec (cushion under 2/sec)
+    if (attempt > 0) await sleep(200); else await sleep(600);
+
+    const r = await f(url, opts);
+
+    // Happy path
+    if (r.status !== 429) return r;
+
+    // 429: honor Retry-After or backoff
+    attempt++;
+    if (attempt > maxRetries) return r;
+
+    const retryAfter = Number(r.headers.get('Retry-After')) || 1;
+    await sleep(Math.min(5000, retryAfter * 1000 * attempt)); // exponential-ish
+  }
+}
+async function fetchShopifyCustomers({ limit = 250, since_id = 0 } = {}) {
+  const shop  = process.env.SHOPIFY_STORE;
   const token = process.env.SHOPIFY_ADMIN_API_KEY;
   if (!shop || !token) throw new Error('SHOPIFY env missing');
 
-  const url = `https://${shop}/admin/api/2024-07/customers.json?limit=${Math.min(+limit || 250, 250)}&since_id=${since_id}`;
-  const r = await f(url, { method: 'GET', headers: { 'X-Shopify-Access-Token': token, 'Accept': 'application/json' } });
+  let url = `https://${shop}/admin/api/2024-07/customers.json?limit=${Math.min(+limit || 250, 250)}&since_id=${since_id}`;
+
+  const r = await shopifyFetchWithRetry(url, {
+    method: 'GET',
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Accept': 'application/json'
+    }
+  });
+
   if (!r.ok) {
     const txt = await r.text().catch(() => '');
     throw new Error(`Shopify customers fetch failed: ${r.status} ${txt}`);
   }
+
+  // read call-limit header (optional: log/slow further if near ceiling)
+  const callLim = r.headers.get('X-Shopify-Shop-Api-Call-Limit'); // e.g. "1/40"
+  if (callLim) {
+    // If you want to be extra careful, you can parse and add an extra sleep when near the bucket limit.
+    // const [used, cap] = callLim.split('/').map(Number);
+    // if (used > cap - 5) await sleep(800);
+  }
+
   const data = await r.json();
   return Array.isArray(data.customers) ? data.customers : [];
 }
-
 app.post('/admin/email', async (req, res) => {
   try {
     if (!isAdmin(req)) return res.status(403).send('Forbidden');
@@ -1293,6 +1332,7 @@ app.post('/admin/email', async (req, res) => {
       const batch = await fetchShopifyCustomers({ limit: Math.min(250, limit - toSend.length), since_id });
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
+      await sleep(600); // ~0.6s cushion between Shopify API pages
 for (const c of batch) {
   const email = normEmail(c.email);
   if (!email) continue;
