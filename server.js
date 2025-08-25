@@ -1358,14 +1358,14 @@ for (const c of batch) {
     if (bare) langFromTags = bare;
   }
 
-  // Also accept full-locale style tags like "en-gb", "pt-br"
-  const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z]{2}$/i.test(t));
+  // accept things like en-gb, en-sti, en-us-east, etc.
+  const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z0-9-]{2,}$/i.test(t));
   const baseFromFullTags = fullLocalesFromTags.map(t => t.slice(0, 2)); // ["en", "pt", ...]
 
   // Build a set of all candidates that should satisfy the segment
   const candidates = new Set(
-    [lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags].filter(Boolean)
-  );
+  [lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags, ...tags].filter(Boolean)
+);
 
   // Apply segment filter:
   // - segment "en" matches any of: "en", "en-gb", "en-us", tags "en"/"lang-en"/"en-gb"
