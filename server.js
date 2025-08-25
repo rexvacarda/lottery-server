@@ -1139,21 +1139,61 @@ app.post('/admin/repair-entries', (req, res) => {
   res.json({ ok: true, repaired: true });
 });
 
-// --- ADMIN: list lotteries with entries (includes last winnerEmail) ---
+// --- ADMIN: list lotteries (active + finished, with entries count & last winner) ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
-  if (pass !== process.env.ADMIN_PASS) return res.status(403).json({ ok: false, message: 'Forbidden' });
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({ ok: false, message: 'Forbidden' });
+  }
+
+  // IMPORTANT: if your endAt was saved in LOCAL time (no timezone),
+  // set NOW_SQL to "datetime('now','localtime')" instead of "datetime('now')".
+  const NOW_SQL = `datetime('now')`;
 
   const sql = `
-    WITH lastw AS (SELECT productId, MAX(drawnAt) AS lastDraw FROM winners GROUP BY productId)
-    SELECT p.productId, p.name, p.endAt, COUNT(e.id) AS entries, w.email AS winnerEmail, lastw.lastDraw
+    WITH
+    ec AS (
+      SELECT productId, COUNT(*) AS cnt
+      FROM entries
+      GROUP BY productId
+    ),
+    lastw AS (
+      SELECT productId, MAX(drawnAt) AS lastDraw
+      FROM winners
+      GROUP BY productId
+    )
+    SELECT
+      p.productId,
+      COALESCE(p.name, 'Product ' || p.productId) AS name,
+      p.endAt,
+      COALESCE(ec.cnt, 0) AS entries,
+      w.email AS winnerEmail,
+      lastw.lastDraw,
+      CASE
+        WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 'active'
+        ELSE 'finished'
+      END AS status
     FROM products p
-    JOIN entries e ON e.productId = p.productId
+    LEFT JOIN ec ON ec.productId = p.productId
     LEFT JOIN lastw ON lastw.productId = p.productId
     LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
-    GROUP BY p.productId
-    ORDER BY CASE WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0 END, p.endAt
+    ORDER BY
+      CASE
+        WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 0  -- active first
+        ELSE 1
+      END,
+      -- Within each group, show latest first when finished; nearest deadline first when active
+      CASE
+        WHEN p.endAt IS NULL OR p.endAt = '' THEN 1
+        WHEN datetime(p.endAt) > ${NOW_SQL} THEN 0
+        ELSE 1
+      END,
+      CASE
+        WHEN datetime(p.endAt) > ${NOW_SQL} THEN datetime(p.endAt) ASC
+        ELSE datetime(p.endAt) DESC
+      END
   `;
+
   db.all(sql, [], (err, rows) => {
     if (err) {
       console.error('SQL error /admin/lotteries:', err);
