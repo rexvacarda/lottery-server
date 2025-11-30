@@ -106,6 +106,31 @@ db.serialize(() => {
       console.warn('ALTER TABLE entries ADD COLUMN locale warning:', err.message || err);
     }
   });
+
+  // === email_campaigns table =======================================
+  db.run(`
+    CREATE TABLE IF NOT EXISTS email_campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      subject TEXT NOT NULL,
+      html TEXT NOT NULL,
+      segment TEXT,                 -- e.g. 'en-gb' (NULL/blank => all)
+      per_hour_limit INTEGER DEFAULT 500,
+      total_cap INTEGER DEFAULT 100000,     -- safety cap
+      sent_count INTEGER DEFAULT 0,
+      failed_count INTEGER DEFAULT 0,
+      skipped_count INTEGER DEFAULT 0,
+      since_id INTEGER DEFAULT 0,   -- resume cursor for Shopify REST
+      status TEXT DEFAULT 'active', -- 'active' | 'paused' | 'done' | 'cancelled'
+      last_run_at TEXT,             -- last batch run timestamp
+      lock_until TEXT,              -- soft lock to avoid concurrent runs (SQLite datetime)
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Helpful indexes
+  db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_status ON email_campaigns(status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_since ON email_campaigns(since_id)`);
 });
 
 // ---------- Helpers ----------
@@ -637,7 +662,7 @@ function buildEntryConfirmEmail(locale, title) {
       subject: `Du er med: ${title}`,
       body: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#333">
                <p>Takk — påmeldingen din til <strong>${title}</strong> er bekreftet.</p>
-               <p>Vi trekker en vinner ved fristen og sender e-post til vinneren.</p>
+               <p>Vi trekker en vinner ved fristen och skickar e-post till vinnaren.</p>
              </div>`
     },
     fi: {
@@ -647,7 +672,7 @@ function buildEntryConfirmEmail(locale, title) {
                <p>Arvonta suoritetaan määräaikana ja voittajalle lähetetään sähköposti.</p>
              </div>`
     }
-};
+  };
   const pack = t[l] || t[s] || t.en;
   return { subject: pack.subject, html: pack.body };
 }
@@ -690,29 +715,29 @@ const BIS_I18N = {
       </div>`,
     de: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gute Nachrichten — <strong>${t}</strong> ist wieder vorrätig.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Jetzt kaufen</a></p></div>`,
     fr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Bonne nouvelle — <strong>${t}</strong> est de retour en stock.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Je commande</a></p></div>`,
-    es: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buenas noticias: <strong>${t}</strong> está de vuelta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar ahora</a></p></div>`,
+    es: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buenas noticias: <strong>${t}</strong> está de vuelta.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar ahora</a></p></div>`,
     it: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Buone notizie — <strong>${t}</strong> è di nuovo disponibile.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Acquista ora</a></p></div>`,
     nl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goed nieuws — <strong>${t}</strong> is weer op voorraad.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Nu shoppen</a></p></div>`,
-    da: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gode nyheder — <strong>${t}</strong> er tilbage på lager.</p><p><a href="${u}" style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Køb nu</a></p></div>`,
-    sv: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goda nyheter — <strong>${t}</strong> är tillbaka i lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Handla nu</a></p></div>`,
-    nb: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Godt nytt — <strong>${t}</strong> er tilbake på lager.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kjøp nå</a></p></div>`,
-    fi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Hyviä uutisia — <strong>${t}</strong> on taas varastossa.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Osta nyt</a></p></div>`,
-    cs: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvělé zprávy — <strong>${t}</strong> je opět skladem.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Koupit nyní</a></p></div>`,
-    sk: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvelá správa — <strong>${t}</strong> je opäť na sklade.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kúpiť teraz</a></p></div>`,
-    sl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobre novice — <strong>${t}</strong> je spet na zalogi.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Nakupuj zdaj</a></p></div>`,
-    hu: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Jó hír — <strong>${t}</strong> újra készleten van.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Vásárlás</a></p></div>`,
-    ro: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Veste bună — <strong>${t}</strong> este din nou în stoc.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Cumpără acum</a></p></div>`,
-    pl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobra wiadomość — <strong>${t}</strong> znów jest dostępny.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Kup teraz</a></p></div>`,
-    pt: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Boa notícia — <strong>${t}</strong> está de volta ao estoque.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar agora</a></p></div>`,
-    bg: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Добра новина — <strong>${t}</strong> отново е наличен.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купи сега</a></p></div>`,
-    el: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Καλά νέα — το <strong>${t}</strong> είναι ξανά διαθέσιμο.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Αγορά τώρα</a></p></div>`,
-    ru: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Отличная новость — <strong>${t}</strong> снова в наличии.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Купить</a></p></div>`,
-    tr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Harika haber — <strong>${t}</strong> yeniden stokta.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Hemen al</a></p></div>`,
-    vi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Tin vui — <strong>${t}</strong> đã có hàng trở lại.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">Mua ngay</a></p></div>`,
-    ja: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>朗報です。<strong>${t}</strong> が再入荷しました。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">今すぐ購入</a></p></div>`,
-    ko: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>좋은 소식 — <strong>${t}</strong> 가 재입고되었습니다.</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">지금 구매</a></p></div>`,
-    'zh-cn': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 现已到货。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即购买</a></p></div>`,
-    'zh-tw': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 現已到貨。</p><p><a href="${u}" style="padding:10px 14px	background:#111;color:#fff;text-decoration:none;border-radius:6px">立即購買</a></p></div>`
+    da: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Gode nyheder — <strong>${t}</strong> er tilbage på lager.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Køb nu</a></p></div>`,
+    sv: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Goda nyheter — <strong>${t}</strong> är tillbaka i lager.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Handla nu</a></p></div>`,
+    nb: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Godt nytt — <strong>${t}</strong> er tilbake på lager.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Kjøp nå</a></p></div>`,
+    fi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Hyviä uutisia — <strong>${t}</strong> on taas varastossa.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Osta nyt</a></p></div>`,
+    cs: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvělé zprávy — <strong>${t}</strong> je opět skladem.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Koupit nyní</a></p></div>`,
+    sk: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Skvelá správa — <strong>${t}</strong> je opäť na sklade.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Kúpiť teraz</a></p></div>`,
+    sl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobre novice — <strong>${t}</strong> je spet na zalogi.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Nakupuj zdaj</a></p></div>`,
+    hu: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Jó hír — <strong>${t}</strong> újra készleten van.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Vásárlás</a></p></div>`,
+    ro: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Veste bună — <strong>${t}</strong> este din nou în stoc.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Cumpără acum</a></p></div>`,
+    pl: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Dobra wiadomość — <strong>${t}</strong> znów jest dostępny.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Kup teraz</a></p></div>`,
+    pt: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Boa notícia — <strong>${t}</strong> está de volta ao estoque.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Comprar agora</a></p></div>`,
+    bg: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Добра новина — <strong>${t}</strong> отново е наличен.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Купи сега</a></p></div>`,
+    el: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Καλά νέα — το <strong>${t}</strong> είναι ξανά διαθέσιμο.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Αγορά τώρα</a></p></div>`,
+    ru: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Отличная новость — <strong>${t}</strong> снова в наличии.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Купить</a></p></div>`,
+    tr: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Harika haber — <strong>${t}</strong> yeniden stokta.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Hemen al</a></p></div>`,
+    vi: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>Tin vui — <strong>${t}</strong> đã có hàng trở lại.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">Mua ngay</a></p></div>`,
+    ja: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>朗報です。<strong>${t}</strong> が再入荷しました。</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">今すぐ購入</a></p></div>`,
+    ko: (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>좋은 소식 — <strong>${t}</strong> 가 재입고되었습니다.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">지금 구매</a></p></div>`,
+    'zh-cn': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 现已到货.</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">立即购买</a></p></div>`,
+    'zh-tw': (t,u)=>`<div style="font-family:Arial,sans-serif;font-size:16px;color:#333"><p>好消息 — <strong>${t}</strong> 現已到貨。</p><p><a href="${u}" style="padding:10px 14px\tbackground:#111;color:#fff;text-decoration:none;border-radius:6px">立即購買</a></p></div>`
   }
 };
 function pickLoc(str, fallback = 'en') {
@@ -722,6 +747,26 @@ function pickLoc(str, fallback = 'en') {
   return BIS_I18N.subject[short] ? short : fallback;
 }
 function sub(tpl, vars) { return tpl.replace(/{{\s*(\w+)\s*}}/g, (_, k) => (vars[k] ?? '')); }
+
+// === Campaign locking helpers ==================================
+async function acquireCampaignLock(id, ms = 4 * 60 * 1000) {
+  // Use SQLite datetime math so comparisons with datetime('now') are valid
+  return new Promise(resolve => {
+    const seconds = Math.max(1, Math.floor(ms / 1000));
+    db.run(`
+      UPDATE email_campaigns
+      SET lock_until = datetime('now', '+' || ? || ' seconds')
+      WHERE id = ?
+        AND (lock_until IS NULL OR lock_until < datetime('now'))
+    `, [seconds, id], function (err) {
+      if (err) return resolve(false);
+      resolve(this.changes > 0);
+    });
+  });
+}
+function releaseCampaignLock(id) {
+  db.run(`UPDATE email_campaigns SET lock_until = NULL WHERE id = ?`, [id], () => {});
+}
 
 // ---------- Routes ----------
 
@@ -1178,21 +1223,16 @@ app.get('/admin/lotteries', (req, res) => {
     LEFT JOIN lastw ON lastw.productId = p.productId
     LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
     ORDER BY
-  -- 1) active first (endAt is NULL/empty or in the future), then finished
   CASE
     WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 0
     ELSE 1
   END ASC,
-
-  -- 2) within "active": earlier deadlines first; NULL/empty last
   CASE
     WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0
   END ASC,
   CASE
     WHEN datetime(p.endAt) > ${NOW_SQL} THEN datetime(p.endAt)
   END ASC,
-
-  -- 3) within "finished": later deadlines first
   CASE
     WHEN p.endAt IS NOT NULL AND p.endAt <> '' AND datetime(p.endAt) <= ${NOW_SQL} THEN datetime(p.endAt)
   END DESC
@@ -1294,9 +1334,7 @@ async function fetchShopifyCustomers({ limit = 250, since_id = 0 } = {}) {
   // read call-limit header (optional: log/slow further if near ceiling)
   const callLim = r.headers.get('X-Shopify-Shop-Api-Call-Limit'); // e.g. "1/40"
   if (callLim) {
-    // If you want to be extra careful, you can parse and add an extra sleep when near the bucket limit.
-    // const [used, cap] = callLim.split('/').map(Number);
-    // if (used > cap - 5) await sleep(800);
+    // Optional: parse and add extra sleep if near the bucket limit
   }
 
   const data = await r.json();
@@ -1333,56 +1371,56 @@ app.post('/admin/email', async (req, res) => {
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
       await sleep(600); // ~0.6s cushion between Shopify API pages
-for (const c of batch) {
-  const email = normEmail(c.email);
-  if (!email) continue;
+      for (const c of batch) {
+        const email = normEmail(c.email);
+        if (!email) continue;
 
-  // Normalize customer.locale
-  const rawLocale = String(c.locale || '').trim();
-  const locale = rawLocale.toLowerCase().replace('_', '-'); // e.g. "en-gb"
-  const lang = (locale.split('-')[0] || '').trim();         // e.g. "en"
+        // Normalize customer.locale
+        const rawLocale = String(c.locale || '').trim();
+        const locale = rawLocale.toLowerCase().replace('_', '-'); // e.g. "en-gb"
+        const lang = (locale.split('-')[0] || '').trim();         // e.g. "en"
 
-  // Normalize tags (Shopify REST gives comma-separated string)
-  const tags = String(c.tags || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(t => t.toLowerCase().replace('_', '-'));
+        // Normalize tags (Shopify REST gives comma-separated string)
+        const tags = String(c.tags || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(t => t.toLowerCase().replace('_', '-'));
 
-  // Pull language from tags: prefer "lang-en"/"lang_en" (now normalized to lang-en), else bare "en"
-  let langFromTags = '';
-  const taggedLang = tags.find(t => /^lang-[a-z]{2}$/i.test(t));
-  if (taggedLang) langFromTags = taggedLang.replace(/^lang-/, '');
-  if (!langFromTags) {
-    const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
-    if (bare) langFromTags = bare;
-  }
+        // Pull language from tags: prefer "lang-en"/"lang_en" (now normalized to lang-en), else bare "en"
+        let langFromTags = '';
+        const taggedLang = tags.find(t => /^lang-[a-z]{2}$/i.test(t));
+        if (taggedLang) langFromTags = taggedLang.replace(/^lang-/, '');
+        if (!langFromTags) {
+          const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
+          if (bare) langFromTags = bare;
+        }
 
-  // accept things like en-gb, en-sti, en-us-east, etc.
-  const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z0-9-]{2,}$/i.test(t));
-  const baseFromFullTags = fullLocalesFromTags.map(t => t.slice(0, 2)); // ["en", "pt", ...]
+        // accept things like en-gb, en-sti, en-us-east, etc.
+        const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z0-9-]{2,}$/i.test(t));
+        const baseFromFullTags = fullLocalesFromTags.map(t => t.slice(0, 2)); // ["en", "pt", ...]
 
-  // Build a set of all candidates that should satisfy the segment
-  const candidates = new Set(
-  [lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags, ...tags].filter(Boolean)
-);
+        // Build a set of all candidates that should satisfy the segment
+        const candidates = new Set(
+          [lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags, ...tags].filter(Boolean)
+        );
 
-  // Apply segment filter:
-  // - segment "en" matches any of: "en", "en-gb", "en-us", tags "en"/"lang-en"/"en-gb"
-  // - segment "en-gb" matches only "en-gb" (or tag "en-gb")
-  if (segment && !candidates.has(segment)) continue;
+        // Apply segment filter:
+        // - segment "en" matches "en", "en-gb", "en-us", tags "en"/"lang-en"/"en-gb"
+        // - segment "en-gb" matches only "en-gb" (or tag "en-gb")
+        if (segment && !candidates.has(segment)) continue;
 
-  // Choose an effective locale to record/preview
-  const effective =
-    locale ||
-    (fullLocalesFromTags[0] || '') ||
-    lang ||
-    (langFromTags || '') ||
-    'en';
+        // Choose an effective locale to record/preview
+        const effective =
+          locale ||
+          (fullLocalesFromTags[0] || '') ||
+          lang ||
+          (langFromTags || '') ||
+          'en';
 
-  toSend.push({ id: c.id, email, locale: effective });
-  if (toSend.length >= limit) break;
-}   
+        toSend.push({ id: c.id, email, locale: effective });
+        if (toSend.length >= limit) break;
+      }
     }
 
     if (dryRun) {
@@ -1429,6 +1467,218 @@ for (const c of batch) {
   }
 });
 
+// === Admin UI to create/list campaigns ==============================
+// Create campaign form
+app.get('/admin/campaign/new', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send('Forbidden');
+  res.send(`
+    <meta charset="utf-8">
+    <div style="max-width:900px;margin:24px auto;font:16px Arial">
+      <h2>Create email campaign</h2>
+      <form method="POST" action="/admin/campaign/create">
+        <input type="hidden" name="pass" value="${(req.query.pass || '')}">
+        <label>Name</label><br>
+        <input name="name" style="width:100%;padding:8px" placeholder="October UK promo"><br><br>
+
+        <label>Segment (e.g. en-gb; blank = all)</label><br>
+        <input name="segment" style="width:240px;padding:8px" value=""><br><br>
+
+        <label>Per-hour send limit</label><br>
+        <input type="number" name="per_hour_limit" value="500" min="1" max="5000" style="width:160px;padding:8px"><br><br>
+
+        <label>Total cap (safety)</label><br>
+        <input type="number" name="total_cap" value="50000" min="1" max="5000000" style="width:160px;padding:8px"><br><br>
+
+        <label>Subject</label><br>
+        <input name="subject" required style="width:100%;padding:8px"><br><br>
+
+        <label>HTML</label><br>
+        <textarea name="html" required rows="12" style="width:100%;padding:8px;font-family:monospace"></textarea><br><br>
+
+        <button type="submit" style="padding:10px 16px;background:#111;color:#fff;border:0;border-radius:6px">Create</button>
+      </form>
+    </div>
+  `);
+});
+
+// --- debug: list all registered routes (temp) ---
+app.get('/__routes', (_req, res) => {
+  const routes = [];
+  (app._router?.stack || []).forEach((m) => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods).join(',').toUpperCase();
+      routes.push(`${methods} ${m.route.path}`);
+    }
+  });
+  res.type('text').send(routes.sort().join('\n'));
+});
+
+// --- debug: tiny sanity route (temp) ---
+app.get('/zzz-campaign-check', (_req, res) => res.send('campaign block is present'));
+
+// Create campaign handler
+app.post('/admin/campaign/create', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send('Forbidden');
+  const name = String(req.body.name || '').trim();
+  const subject = String(req.body.subject || '').trim();
+  const html = String(req.body.html || '').trim();
+  let segment = String(req.body.segment || '').trim().toLowerCase().replace('_','-'); // e.g. en-gb
+  const perHour = Math.max(1, Math.min(5000, Number(req.body.per_hour_limit || 500)));
+  const totalCap = Math.max(1, Math.min(5_000_000, Number(req.body.total_cap || 50_000)));
+
+  if (!subject || !html) return res.status(400).send('Missing subject/html');
+
+  db.run(`
+    INSERT INTO email_campaigns (name, subject, html, segment, per_hour_limit, total_cap, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'active')
+  `, [name, subject, html, segment || null, perHour, totalCap], function (err) {
+    if (err) {
+      console.error('campaign create error', err);
+      return res.status(500).send('DB error');
+    }
+    res.send(`
+      <div style="font:16px Arial;padding:20px">
+        <p>Campaign created with id <b>${this.lastID}</b>.</p>
+        <p>Schedule hourly runner URL (GET):<br>
+        <code>/admin/campaign/run?id=${this.lastID}&pass=${encodeURIComponent(req.body.pass || '')}</code></p>
+        <p><a href="/admin/campaigns?pass=${encodeURIComponent(req.body.pass || '')}">View campaigns</a></p>
+      </div>
+    `);
+  });
+});
+
+// List campaigns
+app.get('/admin/campaigns', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send('Forbidden');
+  db.all(`SELECT * FROM email_campaigns ORDER BY id DESC LIMIT 100`, [], (err, rows) => {
+    if (err) return res.status(500).send('DB error');
+    res.send(`<meta charset="utf-8"><pre>${JSON.stringify(rows, null, 2)}</pre>`);
+  });
+});
+
+// === Hourly campaign runner ========================================
+app.get('/admin/campaign/run', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send('Forbidden');
+  const id = Number(req.query.id || 0);
+  if (!id) return res.status(400).send('Missing id');
+
+  // Load campaign
+  db.get(`SELECT * FROM email_campaigns WHERE id = ?`, [id], async (err, camp) => {
+    if (err) return res.status(500).send('DB error');
+    if (!camp) return res.status(404).send('Campaign not found');
+    if (camp.status !== 'active') return res.status(200).send(`Campaign status is ${camp.status}; nothing to do.`);
+
+    // Lock (avoid overlapping runs)
+    const gotLock = await acquireCampaignLock(id);
+    if (!gotLock) return res.status(200).send('Runner already in progress (lock held).');
+
+    const perHour = Number(camp.per_hour_limit || 500);
+    const totalCap = Number(camp.total_cap || 100000);
+    let since = Number(camp.since_id || 0) || 0;
+    let sent = 0, failed = 0, skipped = 0;
+
+    try {
+      // Build slice to send (<= perHour and <= remaining cap)
+      const toSend = [];
+      while (toSend.length < perHour && (camp.sent_count + toSend.length) < totalCap) {
+        const batch = await fetchShopifyCustomers({ limit: Math.min(250, perHour - toSend.length), since_id: since });
+        if (!batch.length) break;
+        since = batch[batch.length - 1].id;
+
+        for (const c of batch) {
+          if (!c.email) continue;
+          const email = normEmail(c.email);
+
+          // --- segmentation logic (same idea as /admin/email) ---
+          const rawLocale = String(c.locale || '').trim();
+          const locale = rawLocale.toLowerCase().replace('_', '-');    // e.g. "en-gb"
+          const lang = (locale.split('-')[0] || '').trim();            // "en"
+          const tags = String(c.tags || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(t => t.toLowerCase().replace('_', '-'));
+
+          let langFromTags = '';
+          const taggedLang = tags.find(t => /^lang-[a-z]{2}$/i.test(t));
+          if (taggedLang) langFromTags = taggedLang.replace(/^lang-/, '');
+          if (!langFromTags) {
+            const bare = tags.find(t => /^[a-z]{2}$/i.test(t));
+            if (bare) langFromTags = bare;
+          }
+          const fullLocalesFromTags = tags.filter(t => /^[a-z]{2}-[a-z0-9-]{2,}$/i.test(t));
+          const baseFromFullTags = fullLocalesFromTags.map(t => t.slice(0, 2));
+
+          const candidates = new Set([lang, locale, langFromTags, ...fullLocalesFromTags, ...baseFromFullTags, ...tags].filter(Boolean));
+          const segment = (camp.segment || '').trim().toLowerCase();
+          if (segment && !candidates.has(segment)) continue;
+
+          toSend.push({ id: c.id, email });
+          if (toSend.length >= perHour || (camp.sent_count + toSend.length) >= totalCap) break;
+        }
+      }
+
+      // Send this hour's slice
+      for (const cust of toSend) {
+        if (await isUnsubscribed(cust.email)) { skipped++; continue; }
+        try {
+          await mailer.sendMail({
+            from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+            to: cust.email,
+            subject: camp.subject,
+            html: withUnsubFooter(camp.html, cust.email),
+            headers: { 'List-Unsubscribe': listUnsubHeader(cust.email) }
+          });
+          sent++;
+        } catch (e) {
+          console.error('Campaign send error', cust.email, e);
+          failed++;
+        }
+        // gentle throttle (ESP-friendly)
+        await new Promise(r => setTimeout(r, 20));
+      }
+
+      // Progress + status
+      const newSent = (camp.sent_count || 0) + sent;
+      const newFailed = (camp.failed_count || 0) + failed;
+      const newSkipped = (camp.skipped_count || 0) + skipped;
+
+      let newStatus = 'active';
+      if (newSent >= totalCap) newStatus = 'done';
+      if (sent === 0 && failed === 0 && skipped === 0) newStatus = 'done'; // nothing more to send
+
+      db.run(`
+        UPDATE email_campaigns
+        SET sent_count = ?, failed_count = ?, skipped_count = ?, since_id = ?, status = ?, last_run_at = datetime('now'), lock_until = NULL
+        WHERE id = ?
+      `, [newSent, newFailed, newSkipped, since, newStatus, id], (uErr) => {
+        if (uErr) console.error('Campaign update error', uErr);
+      });
+
+      res.json({
+        ok: true,
+        id,
+        attempted: toSend.length,
+        sent, failed, skipped,
+        since_id: since,
+        total_sent: newSent,
+        status: newStatus
+      });
+    } catch (e) {
+      console.error('campaign run error', e);
+      // release lock on error too
+      releaseCampaignLock(id);
+      return res.status(500).json({ ok: false, error: 'run failed' });
+    }
+  });
+});
+
+// Optional convenience redirect so /campaign/new works too
+app.get('/campaign/new', (req, res) => {
+  const pass = req.query.pass || '';
+  res.redirect(`/admin/campaign/new?pass=${encodeURIComponent(pass)}`);
+});
+
 // --- PUBLIC: list current active lotteries ---
 app.get('/lottery/current', (req, res) => {
   const sql = `
@@ -1469,6 +1719,26 @@ app.get('/lottery/count/:productId', (req, res) => {
     }
     res.json({ success: true, totalEntries: row?.c || 0 });
   });
+});
+
+// Bulk email route using SendGrid Web API
+const { sendEmail } = require('./sendgrid');
+
+app.post('/admin/send-bulk', async (req, res) => {
+  const { recipients, subject, html } = req.body;
+
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    return res.status(400).json({ error: 'No recipients provided.' });
+  }
+
+  let sent = 0;
+
+  for (const email of recipients) {
+    const result = await sendEmail({ to: email, subject, html });
+    if (result.ok) sent++;
+  }
+
+  res.json({ ok: true, sent });
 });
 
 // ---------- Health checks ----------
