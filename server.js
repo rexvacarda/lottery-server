@@ -25,11 +25,27 @@ app.use(cors());
 app.use(express.urlencoded({ extended: true })); // for <form> posts
 
 // ---------- Email transporter ----------
+
+// OLD: Active24 SMTP (kept for reference)
+/*
 const mailer = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT || 587),
   secure: String(process.env.EMAIL_PORT) === '465', // true if SSL (465)
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+*/
+
+// NEW: SendGrid SMTP
+// Make sure SENDGRID_API_KEY is set in Render dashboard
+const mailer = nodemailer.createTransport({
+  host: 'smtp.sendgrid.net',
+  port: 587,
+  secure: false, // TLS via STARTTLS
+  auth: {
+    user: 'apikey',                 // literally the string "apikey"
+    pass: process.env.SENDGRID_API_KEY // your real SendGrid API key from env
+  }
 });
 
 // ---------- SQLite DB (file) ----------
