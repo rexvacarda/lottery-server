@@ -1280,13 +1280,16 @@ app.get('/admin/lotteries', (req, res) => {
       console.error('SQL error /admin/lotteries:', err);
       return res.status(500).json({ ok: false, message: 'DB error' });
     }
+
     res.json({
-  ok: true,
-  lotteries: rows.map(r => ({
-    ...r,
-    nameRaw: r.name,
-    name: displayName(r.name, 'en')
-  }))
+      ok: true,
+      lotteries: rows.map(r => ({
+        ...r,
+        nameRaw: r.name,
+        name: displayName(r.name, 'en')
+      }))
+    });
+  });
 });
 
 // ===================== ADMIN BULK EMAIL (Shopify customers) =====================
