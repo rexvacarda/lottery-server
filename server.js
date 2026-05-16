@@ -155,7 +155,28 @@ const BLOCKED_EMAIL_DOMAINS = (process.env.BLOCKED_EMAIL_DOMAINS || '')
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 
-function normEmail(e) { return String(e || '').trim().toLowerCase(); }
+function normEmail(e) {
+  return String(e || '').trim().toLowerCase();
+}
+
+function displayName(name, locale = 'en') {
+  if (!name) return '';
+
+  try {
+    const obj = JSON.parse(name);
+
+    if (obj && typeof obj === 'object') {
+      return (
+        obj[locale] ||
+        obj.en ||
+        Object.values(obj)[0] ||
+        ''
+      );
+    }
+  } catch (_) {}
+
+  return String(name);
+}
 
 function isValidEmailFormat(email) {
   const re = /^[^\s@]+@[^\s@]+\.[A-Za-z0-9-]{2,}$/;
@@ -1259,8 +1280,13 @@ app.get('/admin/lotteries', (req, res) => {
       console.error('SQL error /admin/lotteries:', err);
       return res.status(500).json({ ok: false, message: 'DB error' });
     }
-    res.json({ ok: true, lotteries: rows });
-  });
+    res.json({
+  ok: true,
+  lotteries: rows.map(r => ({
+    ...r,
+    nameRaw: r.name,
+    name: displayName(r.name, 'en')
+  }))
 });
 
 // ===================== ADMIN BULK EMAIL (Shopify customers) =====================
