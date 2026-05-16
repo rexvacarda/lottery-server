@@ -1282,14 +1282,18 @@ app.get('/admin/lotteries', (req, res) => {
     }
 
     res.json({
-      ok: true,
-      lotteries: rows.map(r => ({
-        ...r,
-        nameRaw: r.name,
-        name: displayName(r.name, 'en')
-      }))
-    });
+  ok: true,
+  lotteries: rows.map(r => ({
+    productId: r.productId,
+    name: displayName(r.name, 'en'),
+    endAt: r.endAt,
+    entries: r.entries,
+    winnerEmail: r.winnerEmail,
+    lastDraw: r.lastDraw,
+    status: r.status
+   }))
   });
+ });
 });
 
 // ===================== ADMIN BULK EMAIL (Shopify customers) =====================
