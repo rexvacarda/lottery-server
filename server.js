@@ -1224,12 +1224,11 @@ app.post('/admin/repair-entries', (req, res) => {
 // --- ADMIN: list lotteries (active + finished, with entries count & last winner) ---
 app.get('/admin/lotteries', (req, res) => {
   const pass = req.query.pass;
+
   if (pass !== process.env.ADMIN_PASS) {
     return res.status(403).json({ ok: false, message: 'Forbidden' });
   }
 
-  // IMPORTANT: if your endAt was saved in LOCAL time (no timezone),
-  // set NOW_SQL to "datetime('now','localtime')" instead of "datetime('now')".
   const NOW_SQL = `datetime('now','localtime')`;
 
   const sql = `
@@ -1245,6 +1244,7 @@ app.get('/admin/lotteries', (req, res) => {
       GROUP BY productId
     )
     SELECT
+      p.id,
       p.productId,
       COALESCE(p.name, 'Product ' || p.productId) AS name,
       p.endAt,
@@ -1258,21 +1258,17 @@ app.get('/admin/lotteries', (req, res) => {
     FROM products p
     LEFT JOIN ec ON ec.productId = p.productId
     LEFT JOIN lastw ON lastw.productId = p.productId
-    LEFT JOIN winners w ON w.productId = p.productId AND w.drawnAt = lastw.lastDraw
+    LEFT JOIN winners w
+      ON w.productId = p.productId
+      AND w.drawnAt = lastw.lastDraw
     ORDER BY
-  CASE
-    WHEN p.endAt IS NULL OR p.endAt = '' OR datetime(p.endAt) > ${NOW_SQL} THEN 0
-    ELSE 1
-  END ASC,
-  CASE
-    WHEN p.endAt IS NULL OR p.endAt = '' THEN 1 ELSE 0
-  END ASC,
-  CASE
-    WHEN datetime(p.endAt) > ${NOW_SQL} THEN datetime(p.endAt)
-  END ASC,
-  CASE
-    WHEN p.endAt IS NOT NULL AND p.endAt <> '' AND datetime(p.endAt) <= ${NOW_SQL} THEN datetime(p.endAt)
-  END DESC
+      CASE
+        WHEN p.endAt IS NULL
+          OR p.endAt = ''
+          OR datetime(p.endAt) > ${NOW_SQL}
+        THEN 0 ELSE 1
+      END ASC,
+      datetime(p.endAt) ASC
   `;
 
   db.all(sql, [], (err, rows) => {
@@ -1282,18 +1278,55 @@ app.get('/admin/lotteries', (req, res) => {
     }
 
     res.json({
-  ok: true,
-  lotteries: rows.map(r => ({
-    productId: r.productId,
-    name: displayName(r.name, 'en'),
-    endAt: r.endAt,
-    entries: r.entries,
-    winnerEmail: r.winnerEmail,
-    lastDraw: r.lastDraw,
-    status: r.status
-   }))
+      ok: true,
+      lotteries: rows.map(r => ({
+        id: r.id,
+        productId: r.productId,
+        name: displayName(r.name, 'en'),
+        endAt: r.endAt,
+        entries: r.entries,
+        winnerEmail: r.winnerEmail,
+        lastDraw: r.lastDraw,
+        status: r.status
+      }))
+    });
   });
- });
+});
+
+
+// --- ADMIN: DELETE LOTTERY ---
+app.delete('/admin/delete-lottery/:id', (req, res) => {
+  const pass = req.query.pass;
+
+  if (pass !== process.env.ADMIN_PASS) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Forbidden'
+    });
+  }
+
+  const id = req.params.id;
+
+  db.run(
+    `DELETE FROM products WHERE id = ?`,
+    [id],
+    function(err) {
+
+      if (err) {
+        console.error('Delete lottery error:', err);
+
+        return res.status(500).json({
+          ok: false,
+          message: 'DB error'
+        });
+      }
+
+      res.json({
+        ok: true,
+        deleted: this.changes
+      });
+    }
+  );
 });
 
 // ===================== ADMIN BULK EMAIL (Shopify customers) =====================
