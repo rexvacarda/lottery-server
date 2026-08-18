@@ -933,7 +933,10 @@ app.post('/admin/broadcast-shopify/send', async (req, res) => {
       const batch = toSend.slice(i, i + batchSize);
       const jobs = batch.map(r =>
         mailer.sendMail({
-          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+          from: {
+          name: 'SmellToImpress',
+          address: process.env.FROM_EMAIL || process.env.EMAIL_USER
+         },
           to: r.email,
           subject,
           html: withUnsubFooter(html, r.email),
