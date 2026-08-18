@@ -1038,7 +1038,10 @@ app.post('/lottery/enter', async (req, res) => {
               const title = row?.name || `Product ${productId}`;
               const { subject, html } = buildEntryConfirmEmail(locale, title);
               await mailer.sendMail({
-                from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
+                from: {
+                 name: process.env.FROM_NAME || 'SmellToImpress',
+                 address: process.env.FROM_EMAIL || process.env.EMAIL_USER
+                },
                 to: email,
                 subject,
                 html
