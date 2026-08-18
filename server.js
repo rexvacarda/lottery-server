@@ -1442,19 +1442,22 @@ app.post('/admin/email', async (req, res) => {
 
     if (!subject || !html) return res.status(400).send('Missing subject or html');
 
-    if (testTo) {
-      const email = normEmail(testTo);
-      await mailer.sendMail({
-        from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-        to: email,
-        subject,
-        html: withUnsubFooter(html, email),
-        headers: { 'List-Unsubscribe': listUnsubHeader(email) }
-      });
-    }
+if (testTo) {
+  const email = normEmail(testTo);
+  await mailer.sendMail({
+    from: {
+      name: process.env.FROM_NAME || 'SmellToImpress',
+      address: process.env.FROM_EMAIL || process.env.EMAIL_USER
+    },
+    to: email,
+    subject,
+    html: withUnsubFooter(html, email),
+    headers: { 'List-Unsubscribe': listUnsubHeader(email) }
+  });
+}
 
-    const toSend = [];
-    while (toSend.length < limit) {
+const toSend = [];
+while (toSend.length < limit) {
       const batch = await fetchShopifyCustomers({ limit: Math.min(250, limit - toSend.length), since_id });
       if (!batch.length) break;
       since_id = batch[batch.length - 1].id;
@@ -1522,23 +1525,26 @@ app.post('/admin/email', async (req, res) => {
     }
 
     let sent = 0, skipped = 0, failed = 0;
-    for (const cust of toSend) {
-      if (await isUnsubscribed(cust.email)) { skipped++; continue; }
-      try {
-        await mailer.sendMail({
-          from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
-          to: cust.email,
-          subject,
-          html: withUnsubFooter(html, cust.email),
-          headers: { 'List-Unsubscribe': listUnsubHeader(cust.email) }
-        });
-        sent++;
-      } catch (e) {
-        console.error('Bulk email error', cust.email, e);
-        failed++;
-      }
-      await new Promise(r => setTimeout(r, 15));
-    }
+for (const cust of toSend) {
+  if (await isUnsubscribed(cust.email)) { skipped++; continue; }
+  try {
+    await mailer.sendMail({
+      from: {
+        name: process.env.FROM_NAME || 'SmellToImpress',
+        address: process.env.FROM_EMAIL || process.env.EMAIL_USER
+      },
+      to: cust.email,
+      subject,
+      html: withUnsubFooter(html, cust.email),
+      headers: { 'List-Unsubscribe': listUnsubHeader(cust.email) }
+    });
+    sent++;
+  } catch (e) {
+    console.error('Bulk email error', cust.email, e);
+    failed++;
+  }
+  await new Promise(r => setTimeout(r, 15));
+}
 
     res.send(`
       <div style="font:14px Arial,sans-serif">
