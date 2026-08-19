@@ -1404,7 +1404,7 @@ async function fetchShopifyCustomers({ limit = 250, since_id = 0 } = {}) {
   const token = process.env.SHOPIFY_ADMIN_API_KEY;
   if (!shop || !token) throw new Error('SHOPIFY env missing');
 
-  let url = `https://${shop}/admin/api/2024-07/customers.json?limit=${Math.min(+limit || 250, 250)}&since_id=${since_id}`;
+  let url = `https://${shop}/admin/api/2026-07/customers.json?limit=${Math.min(+limit || 250, 250)}&since_id=${since_id}`;
 
   const r = await shopifyFetchWithRetry(url, {
     method: 'GET',
