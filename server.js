@@ -39,13 +39,19 @@ const mailer = nodemailer.createTransport({
 // NEW: SendGrid SMTP
 // Make sure SENDGRID_API_KEY is set in Render dashboard
 const mailer = nodemailer.createTransport({
+  pool: true,
+
   host: 'smtp.sendgrid.net',
   port: 587,
-  secure: false, // TLS via STARTTLS
+  secure: false,
+
   auth: {
-    user: 'apikey',                 // literally the string "apikey"
-    pass: process.env.SENDGRID_API_KEY // your real SendGrid API key from env
-  }
+    user: 'apikey',
+    pass: process.env.SENDGRID_API_KEY
+  },
+
+  maxConnections: 5,
+  maxMessages: 500
 });
 
 // ---------- SQLite DB (file) ----------
